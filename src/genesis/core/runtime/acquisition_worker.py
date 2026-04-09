@@ -99,7 +99,10 @@ class AcquisitionWorker(QObject):
             self._activeSweepValuesByInstrumentId.setdefault(instrumentId, {})[
                 key
             ] = point
-            self._sleepWithStop(settle)
+            # For time sweeps, point spacing itself defines the sample interval.
+            # Do not add extra settle delay on top of that schedule.
+            if not isTimeSweep:
+                self._sleepWithStop(settle)
             if self._shouldStop:
                 break
             self._sampleAllInstruments(time.time())
@@ -162,7 +165,9 @@ class AcquisitionWorker(QObject):
             self._activeSweepValuesByInstrumentId.setdefault(outerInstId, {})[
                 outerKey
             ] = float(outerValue)
-            self._sleepWithStop(outerSettle)
+            # For time sweeps, point spacing itself defines timing.
+            if not outerIsTime:
+                self._sleepWithStop(outerSettle)
             if self._shouldStop:
                 break
 
@@ -185,7 +190,9 @@ class AcquisitionWorker(QObject):
                 self._activeSweepValuesByInstrumentId.setdefault(innerInstId, {})[
                     innerKey
                 ] = float(innerValue)
-                self._sleepWithStop(innerSettle)
+                # For time sweeps, point spacing itself defines timing.
+                if not innerIsTime:
+                    self._sleepWithStop(innerSettle)
                 if self._shouldStop:
                     break
                 self._sampleAllInstruments(time.time())

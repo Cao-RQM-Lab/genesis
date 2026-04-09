@@ -66,6 +66,7 @@ class MainWindow(QMainWindow):
         self._plotWidgetsByIndex: dict[int, QWidget] = {}
         self._latestValues: dict[tuple[str, str], float] = {}
         self._latestTimestamp: float = 0.0
+        self._runStartUnixTimestamp: float | None = None
         self._dataFileHandle = None
         self._dataCsvWriter = None
         self._dataFilePath: Path | None = None
@@ -509,6 +510,7 @@ class MainWindow(QMainWindow):
 
     def _startSweepRun(self) -> None:
         self._stopAcquisition()
+        self._runStartUnixTimestamp = datetime.now().timestamp()
         if not self._initializedInstrumentsById:
             self.statusLabel.setText("Initialize Instruments First.")
             return
@@ -546,6 +548,7 @@ class MainWindow(QMainWindow):
         self._acqWorker = None
         self._acqThread = None
         self._closeDataLogFile()
+        self._runStartUnixTimestamp = None
 
     def _closeInitializedInstruments(self) -> None:
         for instrument in self._initializedInstrumentsById.values():
@@ -647,9 +650,15 @@ class MainWindow(QMainWindow):
             return None
         axisType = str(axisDef.get("type", ""))
         if axisType == "time":
-            return self._latestTimestamp
+            return self._elapsedSinceRunStart(self._latestTimestamp)
         if axisType == "var":
-            valKey = (str(axisDef.get("instrumentId", "")), str(axisDef.get("key", "")))
+            instId = str(axisDef.get("instrumentId", ""))
+            key = str(axisDef.get("key", ""))
+            # Treat __time__:time as the runtime timestamp (independent variable),
+            # not the configured sweep setpoint.
+            if instId == "__time__" and key == "time":
+                return self._elapsedSinceRunStart(self._latestTimestamp)
+            valKey = (instId, key)
             return self._latestValues.get(valKey)
         if axisType == "expr":
             compiled = self._compiledExprByAxis.get((plotIdx, axisKey))
@@ -664,6 +673,12 @@ class MainWindow(QMainWindow):
                 self._emitExpressionError(plotIdx, axisKey, str(exc))
                 return None
         return None
+
+    def _elapsedSinceRunStart(self, unixTimestamp: float) -> float:
+        start = self._runStartUnixTimestamp
+        if start is None:
+            return float(unixTimestamp)
+        return max(0.0, float(unixTimestamp) - float(start))
 
     def _getYSeriesDefs(self, plotDef: dict[str, Any]) -> list[dict[str, Any]]:
         ySeries = plotDef.get("ySeries", [])
