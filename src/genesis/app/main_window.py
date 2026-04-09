@@ -74,7 +74,6 @@ class MainWindow(QMainWindow):
         self._currentSweepFilePath: Path | None = None
         self._currentSweepRows: list[tuple[float, str, str, float]] = []
         self._currentSweepLabel: str = ""
-        self._currentSweepIndex: int = 0
         self._npyCheckpointEveryRows: int = 100
         self._initializedInstrumentsById: dict[str, Any] = {}
         self._initializedMeasurementKeysByInstrumentId: dict[str, list[str]] = {}
@@ -709,30 +708,15 @@ class MainWindow(QMainWindow):
         sweeps = jobDefinition.get("sweeps", [])
         if not isinstance(sweeps, list) or not sweeps:
             return None
-        bySuite: dict[int, list[dict[str, Any]]] = {}
-        orderedSuites: list[int] = []
-        for idx, sweep in enumerate(sweeps):
-            if not isinstance(sweep, dict):
-                continue
-            suite = sweep.get("suiteIndex", idx + 1)
-            try:
-                suiteIdx = max(1, int(suite))
-            except Exception:
-                suiteIdx = idx + 1
-            if suiteIdx not in bySuite:
-                bySuite[suiteIdx] = []
-                orderedSuites.append(suiteIdx)
-            bySuite[suiteIdx].append(sweep)
-        for suiteIdx in orderedSuites:
-            suiteSweeps = bySuite.get(suiteIdx, [])
-            if len(suiteSweeps) != 2:
-                continue
-            first = suiteSweeps[0]
-            second = suiteSweeps[1]
-            axisA = (str(first.get("instrumentId", "")), str(first.get("key", "")))
-            axisB = (str(second.get("instrumentId", "")), str(second.get("key", "")))
-            if axisA[0] and axisA[1] and axisB[0] and axisB[1]:
-                return axisA, axisB
+        members = [s for s in sweeps if isinstance(s, dict)]
+        if len(members) < 2:
+            return None
+        first = members[0]
+        second = members[1]
+        axisA = (str(first.get("instrumentId", "")), str(first.get("key", "")))
+        axisB = (str(second.get("instrumentId", "")), str(second.get("key", "")))
+        if axisA[0] and axisA[1] and axisB[0] and axisB[1]:
+            return axisA, axisB
         return None
 
     def _normalizedHeatmapAxisDefs(
@@ -782,7 +766,7 @@ class MainWindow(QMainWindow):
         sweepLabel: str,
     ) -> None:
         if sweepPointIndex == 0:
-            self._startSweepDataFile(completedSweeps + 1, sweepLabel)
+            self._startSweepDataFile(sweepLabel)
         clampedPointTotal = max(1, sweepPointTotal)
         currentSweepFraction = min(max(sweepPointIndex / clampedPointTotal, 0.0), 1.0)
 
@@ -841,18 +825,17 @@ class MainWindow(QMainWindow):
             f"Raw export configured ({exportFormat.upper()}) at {path.parent}"
         )
 
-    def _startSweepDataFile(self, sweepIndex: int, sweepLabel: str) -> None:
+    def _startSweepDataFile(self, sweepLabel: str) -> None:
         self._finalizeCurrentSweepFile()
         if self._dataBasePath is None:
             return
-        self._currentSweepIndex = int(sweepIndex)
         self._currentSweepLabel = str(sweepLabel)
         labelSafe = (
             re.sub(r"[^A-Za-z0-9._-]+", "_", str(sweepLabel)).strip("_") or "sweep"
         )
         stem = self._dataBasePath.stem
         ext = ".npy" if self._dataExportFormat == "npy" else ".csv"
-        fileName = f"{stem}_sweep{self._currentSweepIndex:02d}_{labelSafe}{ext}"
+        fileName = f"{stem}_{labelSafe}{ext}"
         filePath = self._dataBasePath.with_name(fileName)
         self._currentSweepFilePath = filePath
         self._currentSweepRows = []
@@ -893,7 +876,6 @@ class MainWindow(QMainWindow):
         self._currentSweepFilePath = None
         self._currentSweepRows = []
         self._currentSweepLabel = ""
-        self._currentSweepIndex = 0
 
     def _finalizeCurrentSweepFile(self) -> None:
         if self._currentSweepFilePath is None:
@@ -921,7 +903,6 @@ class MainWindow(QMainWindow):
             "instrumentId": np.asarray([r[1] for r in rows], dtype=object),
             "key": np.asarray([r[2] for r in rows], dtype=object),
             "value": np.asarray([r[3] for r in rows], dtype=float),
-            "sweepIndex": np.asarray([self._currentSweepIndex], dtype=int),
             "sweepLabel": np.asarray([self._currentSweepLabel], dtype=object),
         }
         tmpPath = self._currentSweepFilePath.with_suffix(

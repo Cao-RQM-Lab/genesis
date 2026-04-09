@@ -314,10 +314,10 @@ class JobBuilderWidget(QWidget):
 
         self._refreshVariableDependentEditors()
 
-        suiteDef = self._extractSingleSweepDefinition(definition)
-        self._ensureSingleSweepEditor(mode=str(suiteDef.get("mode", "1d")))
+        sweepDef = self._extractSingleSweepDefinition(definition)
+        self._ensureSingleSweepEditor(mode=str(sweepDef.get("mode", "1d")))
         if self._sweepEditors:
-            self._sweepEditors[0].setDefinition(suiteDef)
+            self._sweepEditors[0].setDefinition(sweepDef)
 
         for plotDef in list(definition.get("plots", [])):
             available = self._getPlottableVariableRefs()
@@ -729,27 +729,9 @@ class JobBuilderWidget(QWidget):
     def _extractSingleSweepDefinition(
         self, definition: dict[str, Any]
     ) -> dict[str, Any]:
-        suiteDefs = list(definition.get("sweepSuites", []))
-        if suiteDefs and isinstance(suiteDefs[0], dict):
-            return dict(suiteDefs[0])
-
-        grouped: dict[int, list[dict[str, Any]]] = {}
-        orderedIds: list[int] = []
-        for idx, sweepDef in enumerate(list(definition.get("sweeps", [])), start=1):
-            if not isinstance(sweepDef, dict):
-                continue
-            suiteRaw = sweepDef.get("suiteIndex", idx)
-            try:
-                suiteId = max(1, int(suiteRaw))
-            except Exception:
-                suiteId = idx
-            if suiteId not in grouped:
-                grouped[suiteId] = []
-                orderedIds.append(suiteId)
-            grouped[suiteId].append(dict(sweepDef))
-        if not orderedIds:
+        members = [s for s in list(definition.get("sweeps", [])) if isinstance(s, dict)]
+        if not members:
             return {"mode": "1d", "outer": {}}
-        members = grouped.get(orderedIds[0], [])
         if len(members) >= 2:
             return {"mode": "2d", "outer": dict(members[0]), "inner": dict(members[1])}
         if len(members) == 1:
@@ -762,36 +744,32 @@ class JobBuilderWidget(QWidget):
         for editor in self._instanceEditors:
             instruments.append(editor.getValues())
         plots = [ed.toDefinition() for ed in self._plotEditors]
-        sweepSuites = [ed.toDefinition() for ed in self._sweepEditors]
+        sweepDefinitions = [ed.toDefinition() for ed in self._sweepEditors]
         sweeps: list[dict[str, Any]] = []
-        for suiteIdx, suiteDef in enumerate(sweepSuites, start=1):
-            mode = str(suiteDef.get("mode", "1d"))
+        for sweepDef in sweepDefinitions:
+            mode = str(sweepDef.get("mode", "1d"))
             outer = (
-                suiteDef.get("outer", {})
-                if isinstance(suiteDef.get("outer", {}), dict)
+                sweepDef.get("outer", {})
+                if isinstance(sweepDef.get("outer", {}), dict)
                 else {}
             )
             if (
                 not str(outer.get("instrumentId", "")).strip()
                 or not str(outer.get("key", "")).strip()
             ):
-                raise ValueError(f"Sweep {suiteIdx} is missing an outer variable.")
-            outerFlat = dict(outer)
-            outerFlat["suiteIndex"] = suiteIdx
-            sweeps.append(outerFlat)
+                raise ValueError("Sweep is missing an outer variable.")
+            sweeps.append(dict(outer))
             if mode == "2d":
                 inner = (
-                    suiteDef.get("inner", {})
-                    if isinstance(suiteDef.get("inner", {}), dict)
+                    sweepDef.get("inner", {})
+                    if isinstance(sweepDef.get("inner", {}), dict)
                     else {}
                 )
                 if (
                     not str(inner.get("instrumentId", "")).strip()
                     or not str(inner.get("key", "")).strip()
                 ):
-                    raise ValueError(
-                        f"Sweep {suiteIdx} is 2D but missing an inner variable."
-                    )
+                    raise ValueError("2D sweep is missing an inner variable.")
                 firstRef = (
                     str(outer.get("instrumentId", "")),
                     str(outer.get("key", "")),
@@ -802,11 +780,9 @@ class JobBuilderWidget(QWidget):
                 )
                 if firstRef == secondRef:
                     raise ValueError(
-                        f"Sweep {suiteIdx} uses the same variable for outer and inner axes."
+                        "2D sweep uses the same variable for outer and inner axes."
                     )
-                innerFlat = dict(inner)
-                innerFlat["suiteIndex"] = suiteIdx
-                sweeps.append(innerFlat)
+                sweeps.append(dict(inner))
         plotVariables = [
             {
                 "instrumentId": ref.instrumentId,
@@ -865,8 +841,9 @@ class JobBuilderWidget(QWidget):
             "plotVariables": plotVariables,
             "customVariables": customVariables,
             "sweeps": sweeps,
-            "sweepSuites": sweepSuites,
-            "sweepMode": str(sweepSuites[0].get("mode", "1d")) if sweepSuites else "1d",
+            "sweepMode": (
+                str(sweepDefinitions[0].get("mode", "1d")) if sweepDefinitions else "1d"
+            ),
             "exports": [],
             "safeState": safeState,
         }

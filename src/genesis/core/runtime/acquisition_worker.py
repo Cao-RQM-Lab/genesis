@@ -39,46 +39,28 @@ class AcquisitionWorker(QObject):
     def run(self) -> None:
         self.statusMessage.emit("Acquisition started.")
         if self.sweeps:
-            self._runSweepSuites()
+            self._runConfiguredSweep()
         else:
             while not self._shouldStop:
                 self._sampleAllInstruments(time.time())
                 time.sleep(self.intervalSeconds)
         self.statusMessage.emit("Acquisition stopped.")
 
-    def _runSweepSuites(self) -> None:
-        suites = self._buildSweepSuites(self.sweeps)
-        totalSuites = len(suites)
-        for suiteIndex, suiteSweeps in enumerate(suites):
-            if self._shouldStop:
-                break
-            completedBefore = suiteIndex
-            if len(suiteSweeps) == 1:
-                self._runSingleSweep(
-                    suiteSweeps[0],
-                    suiteOrdinal=suiteIndex + 1,
-                    completedBefore=completedBefore,
-                    totalSuites=totalSuites,
-                )
-            elif len(suiteSweeps) == 2:
-                self._runNestedSweep2d(
-                    suiteSweeps[0],
-                    suiteSweeps[1],
-                    suiteOrdinal=suiteIndex + 1,
-                    completedBefore=completedBefore,
-                    totalSuites=totalSuites,
-                )
-            else:
-                self.statusMessage.emit(
-                    f"Skipping suite {suiteIndex + 1}: nested depth {len(suiteSweeps)} is unsupported."
-                )
+    def _runConfiguredSweep(self) -> None:
+        configured = [s for s in self.sweeps if isinstance(s, dict)]
+        if len(configured) == 1:
+            self._runSingleSweep(configured[0])
+            return
+        if len(configured) == 2:
+            self._runNestedSweep2d(configured[0], configured[1])
+            return
+        self.statusMessage.emit(
+            f"Skipping sweep: nested depth {len(configured)} is unsupported."
+        )
 
     def _runSingleSweep(
         self,
         sweep: dict[str, Any],
-        suiteOrdinal: int,
-        completedBefore: int,
-        totalSuites: int,
     ) -> None:
         instrumentId = str(sweep.get("instrumentId", ""))
         key = str(sweep.get("key", ""))
@@ -94,11 +76,11 @@ class AcquisitionWorker(QObject):
 
         values = self._buildSweepValues(sweep)
         settle = float(sweep.get("settleTimeSeconds", 0.0))
-        label = f"suite{suiteOrdinal}:{instrumentId}:{key}"
+        label = f"{instrumentId}:{key}"
         self.statusMessage.emit(
-            f"Running suite {suiteOrdinal} sweep {instrumentId}:{key} ({len(values)} points)."
+            f"Running sweep {instrumentId}:{key} ({len(values)} points)."
         )
-        self.sweepProgress.emit(completedBefore, totalSuites, 0, len(values), label)
+        self.sweepProgress.emit(0, 1, 0, len(values), label)
 
         sweepStart = time.time()
         for pointIndex, point in enumerate(values, start=1):
@@ -121,17 +103,12 @@ class AcquisitionWorker(QObject):
             if self._shouldStop:
                 break
             self._sampleAllInstruments(time.time())
-            self.sweepProgress.emit(
-                completedBefore + 1, totalSuites, pointIndex, len(values), label
-            )
+            self.sweepProgress.emit(1, 1, pointIndex, len(values), label)
 
     def _runNestedSweep2d(
         self,
         outerSweep: dict[str, Any],
         innerSweep: dict[str, Any],
-        suiteOrdinal: int,
-        completedBefore: int,
-        totalSuites: int,
     ) -> None:
         outerInstId = str(outerSweep.get("instrumentId", ""))
         outerKey = str(outerSweep.get("key", ""))
@@ -160,13 +137,11 @@ class AcquisitionWorker(QObject):
         outerSettle = float(outerSweep.get("settleTimeSeconds", 0.0))
         innerSettle = float(innerSweep.get("settleTimeSeconds", 0.0))
         totalPoints = len(outerValues) * len(innerValues)
-        label = (
-            f"suite{suiteOrdinal}:2d:{outerInstId}:{outerKey}|{innerInstId}:{innerKey}"
-        )
+        label = f"2d:{outerInstId}:{outerKey}|{innerInstId}:{innerKey}"
         self.statusMessage.emit(
-            f"Running suite {suiteOrdinal} 2D sweep {outerInstId}:{outerKey} x {innerInstId}:{innerKey} ({totalPoints} points)."
+            f"Running 2D sweep {outerInstId}:{outerKey} x {innerInstId}:{innerKey} ({totalPoints} points)."
         )
-        self.sweepProgress.emit(completedBefore, totalSuites, 0, totalPoints, label)
+        self.sweepProgress.emit(0, 1, 0, totalPoints, label)
 
         sweepStart = time.time()
         pointIndex = 0
@@ -215,32 +190,7 @@ class AcquisitionWorker(QObject):
                     break
                 self._sampleAllInstruments(time.time())
                 pointIndex += 1
-                self.sweepProgress.emit(
-                    completedBefore + 1, totalSuites, pointIndex, totalPoints, label
-                )
-
-    def _buildSweepSuites(
-        self, sweeps: list[dict[str, Any]]
-    ) -> list[list[dict[str, Any]]]:
-        suitesById: dict[int, list[dict[str, Any]]] = {}
-        orderedSuiteIds: list[int] = []
-        nextImplicit = 1
-        for sweep in sweeps:
-            rawSuite = sweep.get("suiteIndex")
-            if rawSuite is None:
-                suiteId = nextImplicit
-                nextImplicit += 1
-            else:
-                try:
-                    suiteId = max(1, int(rawSuite))
-                except Exception:
-                    suiteId = nextImplicit
-                    nextImplicit += 1
-            if suiteId not in suitesById:
-                suitesById[suiteId] = []
-                orderedSuiteIds.append(suiteId)
-            suitesById[suiteId].append(sweep)
-        return [suitesById[suiteId] for suiteId in orderedSuiteIds]
+                self.sweepProgress.emit(1, 1, pointIndex, totalPoints, label)
 
     def _sampleAllInstruments(self, timestamp: float) -> None:
         for instrumentId, instrument in self.instrumentsById.items():
