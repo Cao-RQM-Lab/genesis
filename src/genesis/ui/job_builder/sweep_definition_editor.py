@@ -32,6 +32,7 @@ class _NoWheelDoubleSpinBox(QDoubleSpinBox):
         super().__init__(parent)
         self._validator = QDoubleValidator(self)
         self._validator.setNotation(QDoubleValidator.Notation.ScientificNotation)
+        self.setDecimals(16)
         edit = self.lineEdit()
         if edit is not None:
             edit.setMaxLength(64)
@@ -55,6 +56,11 @@ class _NoWheelDoubleSpinBox(QDoubleSpinBox):
         except Exception:
             return float(self.value())
         return max(float(self.minimum()), min(float(self.maximum()), value))
+
+    def textFromValue(self, value: float) -> str:
+        # Preserve significant precision on focus-out, and use scientific form
+        # automatically for very small/large values.
+        return f"{float(value):.16g}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,9 +229,9 @@ class SweepDefinitionEditor(QWidget):
         settleTimeSpin: _NoWheelDoubleSpinBox,
         spacingCombo: QComboBox,
     ) -> None:
-        startSpin.setDecimals(8)
-        stopSpin.setDecimals(8)
-        settleTimeSpin.setDecimals(6)
+        startSpin.setDecimals(16)
+        stopSpin.setDecimals(16)
+        settleTimeSpin.setDecimals(16)
         startSpin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
         stopSpin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
         pointsSpin.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
@@ -238,7 +244,7 @@ class SweepDefinitionEditor(QWidget):
         settleTimeSpin.setValue(0.0)
         pointsSpin.setRange(2, 100000)
         pointsSpin.setValue(101)
-        stepSizeSpin.setDecimals(8)
+        stepSizeSpin.setDecimals(16)
         stepSizeSpin.setRange(1e-12, 1e12)
         stepSizeSpin.setSingleStep(0.001)
         stepSizeSpin.setValue(0.01)

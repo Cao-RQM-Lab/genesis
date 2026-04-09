@@ -33,6 +33,7 @@ class _NoWheelDoubleSpinBox(QDoubleSpinBox):
         super().__init__(parent)
         self._validator = QDoubleValidator(self)
         self._validator.setNotation(QDoubleValidator.Notation.ScientificNotation)
+        self.setDecimals(16)
         edit = self.lineEdit()
         if edit is not None:
             edit.setMaxLength(64)
@@ -56,6 +57,11 @@ class _NoWheelDoubleSpinBox(QDoubleSpinBox):
         except Exception:
             return float(self.value())
         return max(float(self.minimum()), min(float(self.maximum()), value))
+
+    def textFromValue(self, value: float) -> str:
+        # Preserve significant precision on focus-out, and use scientific form
+        # automatically for very small/large values.
+        return f"{float(value):.16g}"
 
 
 class InstrumentConfigForm(QWidget):
@@ -123,7 +129,7 @@ class InstrumentConfigForm(QWidget):
             widget = _NoWheelDoubleSpinBox(self)
             widget.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
             widget.setValue(float(value))
-            widget.setDecimals(6)
+            widget.setDecimals(16)
             if field.minValue is not None or field.maxValue is not None:
                 minValue = (
                     float(field.minValue) if field.minValue is not None else -1e12
