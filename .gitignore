@@ -1,0 +1,54 @@
+# macOS
+.DS_Store
+
+# IDEs / editors
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# Python virtual environments
+venv/
+virtualenv/
+.venv/
+env/
+
+# Build / packaging artifacts
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller
+*.spec
+
+# Testing / linting caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Qt / PySide generated artifacts
+*.qrc.depends
+ui_*.py
+*_rc.py
+*.qm
+*.qm.bak
+
+# Local runtime outputs (data exports, logs, manuals)
+runs/
+jobs/
+*.log
+*.csv
+*.npy
+*.npy.tmp
+
+# Misc binary / non-source
+*.gds

@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "genesis"
+version = "0.1.0"
+description = "Genesis – a PySide6 GUI and control framework for lab instruments via GPIB/pyvisa."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Genesis Developers" }
+]
+dependencies = [
+  "PySide6>=6.6",
+  "pyqtgraph>=0.13",
+  "numpy>=1.24",
+  "pyvisa>=1.14",
+  "pyvisa-py>=0.7",
+]
+
+[project.optional-dependencies]
+dev = [
+  "black>=24.0.0",
+  "pre-commit>=3.0.0",
+  "mypy>=1.8.0",
+  "types-setuptools",
+]
+
+[project.urls]
+Homepage = "https://example.com/genesis"
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+include = "\\.pyi?$"
+exclude = """
+/(
+    \\.git
+  | \\.mypy_cache
+  | \\.venv
+  | build
+  | dist
+)/
+"""

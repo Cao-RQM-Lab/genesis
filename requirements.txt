@@ -1,0 +1,6 @@
+PySide6>=6.6
+pyqtgraph>=0.13
+numpy>=1.24
+pyvisa>=1.14
+pyvisa-py>=0.7
+-e .
