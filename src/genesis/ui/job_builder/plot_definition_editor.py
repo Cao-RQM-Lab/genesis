@@ -680,14 +680,14 @@ class PlotDefinitionEditor(QWidget):
         if event.type() == QEvent.Type.FocusIn and isinstance(watched, QLineEdit):
             self._rememberFocusedLineEdit(watched)
         elif event.type() == QEvent.Type.FocusIn:
-            if self._isInsertButton(watched):
+            if self._isInsertButtonOrChild(watched):
                 return super().eventFilter(watched, event)
             # Any non-text focus clears remembered text target.
             self._lastFocusedLineEdit = None
         elif (
             event.type() == QEvent.Type.MouseButtonPress
             and not isinstance(watched, QLineEdit)
-            and not self._isInsertButton(watched)
+            and not self._isInsertButtonOrChild(watched)
         ):
             # Clicking empty/background/non-text widgets should also clear target.
             self._lastFocusedLineEdit = None
@@ -701,6 +701,14 @@ class PlotDefinitionEditor(QWidget):
             self.yExprInsertButton,
             self.zExprInsertButton,
         }
+
+    def _isInsertButtonOrChild(self, watched: QObject | None) -> bool:
+        obj = watched
+        while obj is not None:
+            if self._isInsertButton(obj):
+                return True
+            obj = obj.parent()
+        return False
 
     def _installFocusTracking(self) -> None:
         # Track focus on all child widgets so non-text focus can clear the target.
