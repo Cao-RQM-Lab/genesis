@@ -415,76 +415,80 @@ class B29xxInstrument(BaseInstrument):
 
         if key == "triggerAcquireSource":
             source = str(value).upper()
+            if source == "IMM":
+                source = "AINT"
+            if source == "EXT":
+                source = "EXT1"
             if source not in {"AINT", "BUS", "EXT1", "TIM"}:
                 raise ValueError(f"Unsupported acquire trigger source: {value!r}")
-            self.transport.write(f":TRIG{ch}:ACQ:SOUR {source}")
+            self.transport.write(f":TRIG:ACQ:SOUR {source}")
             if source == "TIM":
                 timer = self.jobConfig.get("triggerAcquireTimerS")
                 if timer is not None:
-                    self.transport.write(f":TRIG{ch}:ACQ:TIM {self._fmtFloat(timer)}")
+                    self.transport.write(f":TRIG:ACQ:TIM {self._fmtFloat(timer)}")
             return
 
         if key == "triggerAcquireDelayS":
             if int(self.jobConfig.get("triggerAcquireDelayAuto", 1)) != 0:
                 return
-            self.transport.write(f":TRIG{ch}:ACQ:DEL {self._fmtFloat(value)}")
+            self.transport.write(f":TRIG:ACQ:DEL {self._fmtFloat(value)}")
             return
 
         if key == "triggerAcquireDelayAuto":
             enabled = int(value) != 0
             self.transport.write(
-                f":TRIG{ch}:ACQ:DEL:AUTO ON"
-                if enabled
-                else f":TRIG{ch}:ACQ:DEL:AUTO OFF"
+                ":TRIG:ACQ:DEL:AUTO ON" if enabled else ":TRIG:ACQ:DEL:AUTO OFF"
             )
             if not enabled:
                 delay = self.jobConfig.get("triggerAcquireDelayS")
                 if delay is not None:
-                    self.transport.write(f":TRIG{ch}:ACQ:DEL {self._fmtFloat(delay)}")
+                    self.transport.write(f":TRIG:ACQ:DEL {self._fmtFloat(delay)}")
             return
 
         if key == "triggerAcquireCount":
-            self.transport.write(f":TRIG{ch}:ACQ:COUN {int(value)}")
+            self.transport.write(f":TRIG:ACQ:COUN {int(value)}")
             return
 
         if key == "triggerAcquireTimerS":
             if str(self.jobConfig.get("triggerAcquireSource", "AINT")).upper() != "TIM":
                 return
-            self.transport.write(f":TRIG{ch}:ACQ:TIM {self._fmtFloat(value)}")
+            self.transport.write(f":TRIG:ACQ:TIM {self._fmtFloat(value)}")
             return
 
         if key == "triggerTransientSource":
             source = str(value).upper()
+            if source == "IMM":
+                source = "AINT"
+            if source == "EXT":
+                source = "EXT1"
             if source not in {"AINT", "BUS", "EXT1", "TIM"}:
                 raise ValueError(f"Unsupported transient trigger source: {value!r}")
-            self.transport.write(f":TRIG{ch}:TRAN:SOUR {source}")
+            self.transport.write(f":TRIG:TRAN:SOUR {source}")
             if source == "TIM":
                 timer = self.jobConfig.get("triggerTransientTimerS")
                 if timer is not None:
-                    self.transport.write(f":TRIG{ch}:TRAN:TIM {self._fmtFloat(timer)}")
+                    self.transport.write(f":TRIG:TRAN:TIM {self._fmtFloat(timer)}")
             return
 
         if key == "triggerTransientDelayS":
             if int(self.jobConfig.get("triggerTransientDelayAuto", 1)) != 0:
                 return
-            self.transport.write(f":TRIG{ch}:TRAN:DEL {self._fmtFloat(value)}")
+            self.transport.write(f":TRIG:TRAN:DEL {self._fmtFloat(value)}")
             return
 
         if key == "triggerTransientDelayAuto":
             enabled = int(value) != 0
             self.transport.write(
-                f":TRIG{ch}:TRAN:DEL:AUTO ON"
-                if enabled
-                else f":TRIG{ch}:TRAN:DEL:AUTO OFF"
+                ":TRIG:TRAN:DEL:AUTO ON" if enabled else ":TRIG:TRAN:DEL:AUTO OFF"
             )
             if not enabled:
                 delay = self.jobConfig.get("triggerTransientDelayS")
                 if delay is not None:
-                    self.transport.write(f":TRIG{ch}:TRAN:DEL {self._fmtFloat(delay)}")
+                    self.transport.write(f":TRIG:TRAN:DEL {self._fmtFloat(delay)}")
             return
 
         if key == "triggerTransientCount":
-            self.transport.write(f":TRIG{ch}:TRAN:COUN {int(value)}")
+            self.transport.write(f":TRIG:TRAN:COUN {int(value)}")
             return
 
         if key == "triggerTransientTimerS":
@@ -493,7 +497,7 @@ class B29xxInstrument(BaseInstrument):
                 != "TIM"
             ):
                 return
-            self.transport.write(f":TRIG{ch}:TRAN:TIM {self._fmtFloat(value)}")
+            self.transport.write(f":TRIG:TRAN:TIM {self._fmtFloat(value)}")
             return
 
     def _queryFloat(self, command: str) -> float:

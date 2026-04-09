@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from genesis.app.user_dirs import genesis_jobs_dir
 from genesis.core.instrument.registry import InstrumentRegistry
 from genesis.core.runtime.expression_eval import ExpressionError, compileExpression
 from genesis.ui.job_builder.instrument_instance_editor import InstrumentInstanceEditor
@@ -260,7 +261,7 @@ class JobBuilderWidget(QWidget):
         pathStr = QFileDialog.getOpenFileName(
             self,
             "Open Job JSON",
-            str(Path("jobs").resolve()),
+            str(genesis_jobs_dir()),
             filter="JSON files (*.json)",
         )[0]
         if not pathStr:
@@ -882,8 +883,7 @@ class JobBuilderWidget(QWidget):
             return
         jobId = str(jobDefinition.get("jobId", "")).strip() or "job"
         safeName = re.sub(r"[^A-Za-z0-9._-]+", "_", jobId) or "job"
-        defaultPath = self._currentJobPath or (Path("jobs") / f"{safeName}.json")
-        defaultPath.parent.mkdir(parents=True, exist_ok=True)
+        defaultPath = self._currentJobPath or (genesis_jobs_dir() / f"{safeName}.json")
 
         pathStr = QFileDialog.getSaveFileName(
             self,

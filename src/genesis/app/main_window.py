@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from genesis.app.user_dirs import genesis_jobs_dir, genesis_runs_dir
 from genesis.core.job.abort_controller import AbortController
 from genesis.core.job.model import JobModel
 from genesis.core.instrument.discovery import loadBuiltInInstruments
@@ -178,7 +179,7 @@ class MainWindow(QMainWindow):
         pathStr = QFileDialog.getOpenFileName(
             self,
             "Open Job JSON",
-            str(Path("jobs").resolve()),
+            str(genesis_jobs_dir()),
             filter="JSON files (*.json)",
         )[0]
         if not pathStr:
@@ -813,8 +814,7 @@ class MainWindow(QMainWindow):
         jobId = str(jobDefinition.get("jobId", "job")).strip() or "job"
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safeJobId = "".join(c if c.isalnum() or c in "._-" else "_" for c in jobId)
-        outDir = Path("runs")
-        outDir.mkdir(parents=True, exist_ok=True)
+        outDir = genesis_runs_dir()
         defaultPath = outDir / f"{safeJobId}_{stamp}.csv"
         pathStr, selectedFilter = QFileDialog.getSaveFileName(
             self,
