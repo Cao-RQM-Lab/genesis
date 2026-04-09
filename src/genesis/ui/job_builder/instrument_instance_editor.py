@@ -5,7 +5,6 @@ from typing import Any
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QFormLayout,
     QLineEdit,
     QLabel,
@@ -17,6 +16,7 @@ from PySide6.QtWidgets import (
 from genesis.core.instrument.base_instrument import BaseInstrument
 from genesis.core.instrument.config_field import ConfigFieldDefinition
 from genesis.core.transport.transport_factory import getAvailableTransportKeys
+from genesis.ui.no_wheel_combo_box import NoWheelComboBox
 from genesis.ui.job_builder.instrument_config_form import InstrumentConfigForm
 
 
@@ -67,7 +67,7 @@ class InstrumentInstanceEditor(QWidget):
         self.idLineEdit.textChanged.connect(self.instanceIdChanged.emit)
         formLayout.addRow("Instance ID", self.idLineEdit)
 
-        self.transportComboBox = QComboBox(groupBox)
+        self.transportComboBox = NoWheelComboBox(groupBox)
         transportKeys: list[str] = list(self.instrumentType.getSupportedTransportKeys())
         for available in getAvailableTransportKeys():
             if available not in transportKeys:
@@ -198,32 +198,32 @@ class InstrumentInstanceEditor(QWidget):
 
     def _connectModeAwareSweepUi(self) -> None:
         modeWidget = self.configForm.getWidget("forceMode")
-        if isinstance(modeWidget, QComboBox):
+        if isinstance(modeWidget, NoWheelComboBox):
             modeWidget.currentIndexChanged.connect(
                 lambda _idx: self._updateModeAwareSweepUi()
             )
         voltageAutoWidget = self.configForm.getWidget("voltageRangeAuto")
-        if isinstance(voltageAutoWidget, QComboBox):
+        if isinstance(voltageAutoWidget, NoWheelComboBox):
             voltageAutoWidget.currentIndexChanged.connect(
                 lambda _idx: self._updateModeAwareSweepUi()
             )
         currentAutoWidget = self.configForm.getWidget("currentRangeAuto")
-        if isinstance(currentAutoWidget, QComboBox):
+        if isinstance(currentAutoWidget, NoWheelComboBox):
             currentAutoWidget.currentIndexChanged.connect(
                 lambda _idx: self._updateModeAwareSweepUi()
             )
         safeModeWidget = self.safeConfigForm.getWidget("forceMode")
-        if isinstance(safeModeWidget, QComboBox):
+        if isinstance(safeModeWidget, NoWheelComboBox):
             safeModeWidget.currentIndexChanged.connect(
                 lambda _idx: self._updateModeAwareSweepUi()
             )
         safeVoltageAutoWidget = self.safeConfigForm.getWidget("voltageRangeAuto")
-        if isinstance(safeVoltageAutoWidget, QComboBox):
+        if isinstance(safeVoltageAutoWidget, NoWheelComboBox):
             safeVoltageAutoWidget.currentIndexChanged.connect(
                 lambda _idx: self._updateModeAwareSweepUi()
             )
         safeCurrentAutoWidget = self.safeConfigForm.getWidget("currentRangeAuto")
-        if isinstance(safeCurrentAutoWidget, QComboBox):
+        if isinstance(safeCurrentAutoWidget, NoWheelComboBox):
             safeCurrentAutoWidget.currentIndexChanged.connect(
                 lambda _idx: self._updateModeAwareSweepUi()
             )

@@ -5,7 +5,6 @@ from typing import Any
 from PySide6.QtGui import QDoubleValidator, QValidator, QWheelEvent
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
@@ -15,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from genesis.core.instrument.config_field import ConfigFieldDefinition
+from genesis.ui.no_wheel_combo_box import NoWheelComboBox
 
 
 class _NoWheelSpinBox(QSpinBox):
@@ -144,7 +144,7 @@ class InstrumentConfigForm(QWidget):
             widget.setChecked(bool(value))
 
         elif fieldType == "enum":
-            widget = QComboBox(self)
+            widget = NoWheelComboBox(self)
             for choice in field.choices or []:
                 widget.addItem(choice.label, userData=choice.value)
             index = widget.findData(value)

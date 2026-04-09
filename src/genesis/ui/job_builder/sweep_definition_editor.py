@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from genesis.ui.no_wheel_combo_box import NoWheelComboBox
+
 
 class _NoWheelSpinBox(QSpinBox):
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -83,24 +85,24 @@ class SweepDefinitionEditor(QWidget):
         self._isSyncingOuterLinearFields = False
         self._isSyncingInnerLinearFields = False
         self._mode = "2d" if mode == "2d" else "1d"
-        self.modeCombo = QComboBox(self)
-        self.outerInstrumentCombo = QComboBox(self)
-        self.outerVariableCombo = QComboBox(self)
+        self.modeCombo = NoWheelComboBox(self)
+        self.outerInstrumentCombo = NoWheelComboBox(self)
+        self.outerVariableCombo = NoWheelComboBox(self)
         self.outerStartSpin = _NoWheelDoubleSpinBox(self)
         self.outerStopSpin = _NoWheelDoubleSpinBox(self)
         self.outerPointsSpin = _NoWheelSpinBox(self)
         self.outerStepSizeSpin = _NoWheelDoubleSpinBox(self)
-        self.outerSpacingCombo = QComboBox(self)
+        self.outerSpacingCombo = NoWheelComboBox(self)
         self.outerSettleTimeSpin = _NoWheelDoubleSpinBox(self)
 
         self.innerGroup = QGroupBox("Inner Sweep", self)
-        self.innerInstrumentCombo = QComboBox(self.innerGroup)
-        self.innerVariableCombo = QComboBox(self.innerGroup)
+        self.innerInstrumentCombo = NoWheelComboBox(self.innerGroup)
+        self.innerVariableCombo = NoWheelComboBox(self.innerGroup)
         self.innerStartSpin = _NoWheelDoubleSpinBox(self.innerGroup)
         self.innerStopSpin = _NoWheelDoubleSpinBox(self.innerGroup)
         self.innerPointsSpin = _NoWheelSpinBox(self.innerGroup)
         self.innerStepSizeSpin = _NoWheelDoubleSpinBox(self.innerGroup)
-        self.innerSpacingCombo = QComboBox(self.innerGroup)
+        self.innerSpacingCombo = NoWheelComboBox(self.innerGroup)
         self.innerSettleTimeSpin = _NoWheelDoubleSpinBox(self.innerGroup)
 
         self._setupUi()

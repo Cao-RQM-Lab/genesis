@@ -4,7 +4,9 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QRectF
 from PySide6.QtGui import QResizeEvent
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
+
+from genesis.ui.no_wheel_combo_box import NoWheelComboBox
 
 
 class HeatmapPlotWidget(QWidget):
@@ -24,7 +26,7 @@ class HeatmapPlotWidget(QWidget):
         self._controlsWidget = QWidget(self)
         controls = QHBoxLayout(self._controlsWidget)
         controls.setContentsMargins(0, 0, 0, 0)
-        self.colormapCombo = QComboBox(self)
+        self.colormapCombo = NoWheelComboBox(self)
         for name in ("viridis", "plasma", "inferno", "magma", "cividis", "turbo"):
             self.colormapCombo.addItem(name, userData=name)
         controls.addWidget(self.colormapCombo)

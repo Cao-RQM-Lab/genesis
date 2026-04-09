@@ -21,6 +21,7 @@ from genesis.core.runtime.expression_eval import (
     compileExpression,
     tokenToRefString,
 )
+from genesis.ui.no_wheel_combo_box import NoWheelComboBox
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,9 +50,9 @@ class PlotDefinitionEditor(QWidget):
         self.plotTypeLabel = QLabel(self)
 
         # 1D scatter controls
-        self.scatterXVarCombo = QComboBox(self)
-        self.yInsertInstrumentCombo = QComboBox(self)
-        self.yInsertVariableCombo = QComboBox(self)
+        self.scatterXVarCombo = NoWheelComboBox(self)
+        self.yInsertInstrumentCombo = NoWheelComboBox(self)
+        self.yInsertVariableCombo = NoWheelComboBox(self)
         self.yExprInsertButton = QPushButton("Insert", self)
         self.yAddExprButton = QPushButton("Add Y Expression", self)
         self.yExprStatusLabel = QLabel(self)
@@ -62,12 +63,12 @@ class PlotDefinitionEditor(QWidget):
         self._lastFocusedLineEdit: QLineEdit | None = None
 
         # 2D heatmap controls
-        self.heatmapXVarCombo = QComboBox(self)
-        self.heatmapYVarCombo = QComboBox(self)
+        self.heatmapXVarCombo = NoWheelComboBox(self)
+        self.heatmapYVarCombo = NoWheelComboBox(self)
         self.zExprLineEdit = QLineEdit(self)
         self.zNameLineEdit = QLineEdit(self)
-        self.zInsertInstrumentCombo = QComboBox(self)
-        self.zInsertVariableCombo = QComboBox(self)
+        self.zInsertInstrumentCombo = NoWheelComboBox(self)
+        self.zInsertVariableCombo = NoWheelComboBox(self)
         self.zExprInsertButton = QPushButton("Insert", self)
         self.zExprStatusLabel = QLabel(self)
 
