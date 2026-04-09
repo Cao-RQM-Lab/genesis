@@ -869,10 +869,6 @@ class MainWindow(QMainWindow):
         keys: list[tuple[str, str]] = []
         for instrumentId in sorted(self._rawLogKeysByInstrumentId.keys()):
             for key in sorted(self._rawLogKeysByInstrumentId.get(instrumentId, set())):
-                # For time sweeps, the independent variable is represented by
-                # timestamp; omit duplicate __time__:time export columns.
-                if instrumentId == "__time__" and key == "time":
-                    continue
                 keys.append((instrumentId, key))
         return keys
 
