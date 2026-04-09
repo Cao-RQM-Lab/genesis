@@ -216,8 +216,8 @@ class PlotDefinitionEditor(QWidget):
         if self._renderMode == "heatmap":
             hxCurrent = self.heatmapXVarCombo.currentData()
             hyCurrent = self.heatmapYVarCombo.currentData()
-            self._populateSweepVariableCombo(self.heatmapXVarCombo)
-            self._populateSweepVariableCombo(self.heatmapYVarCombo)
+            self._populateSweepVariableCombo(self.heatmapXVarCombo, includeTime=True)
+            self._populateSweepVariableCombo(self.heatmapYVarCombo, includeTime=True)
             self._restoreData(self.heatmapXVarCombo, hxCurrent)
             self._restoreData(self.heatmapYVarCombo, hyCurrent)
 
@@ -233,7 +233,7 @@ class PlotDefinitionEditor(QWidget):
             return
 
         xCurrent = self.scatterXVarCombo.currentData()
-        self._populateSweepVariableCombo(self.scatterXVarCombo)
+        self._populateSweepVariableCombo(self.scatterXVarCombo, includeTime=True)
         self._restoreData(self.scatterXVarCombo, xCurrent)
 
         yInstCurrent = self.yInsertInstrumentCombo.currentData()
@@ -256,12 +256,22 @@ class PlotDefinitionEditor(QWidget):
     def _availableSweepRefs(self) -> list[PlotVariableRef]:
         return list(self._selectedSweepVariables)
 
-    def _populateSweepVariableCombo(self, combo: QComboBox) -> None:
+    def _isTimeSweepSelected(self) -> bool:
+        return any(
+            ref.instrumentId == "__time__" and ref.key == "time"
+            for ref in self._selectedSweepVariables
+        )
+
+    def _populateSweepVariableCombo(self, combo: QComboBox, includeTime: bool) -> None:
         current = combo.currentData()
         combo.clear()
+        allowTime = self._isTimeSweepSelected()
         for ref in sorted(
             self._availableSweepRefs(), key=lambda r: (r.instrumentId, r.key)
         ):
+            if ref.instrumentId == "__time__" and ref.key == "time":
+                if not allowTime or not includeTime:
+                    continue
             display = f"{'Time' if ref.instrumentId == '__time__' else ref.instrumentId}:{ref.key}"
             combo.addItem(display, userData=(ref.instrumentId, ref.key))
         self._restoreData(combo, current)
@@ -270,18 +280,21 @@ class PlotDefinitionEditor(QWidget):
         if self._renderMode == "heatmap":
             xCurrent = self.heatmapXVarCombo.currentData()
             yCurrent = self.heatmapYVarCombo.currentData()
-            self._populateSweepVariableCombo(self.heatmapXVarCombo)
-            self._populateSweepVariableCombo(self.heatmapYVarCombo)
+            self._populateSweepVariableCombo(self.heatmapXVarCombo, includeTime=True)
+            self._populateSweepVariableCombo(self.heatmapYVarCombo, includeTime=True)
             self._restoreData(self.heatmapXVarCombo, xCurrent)
             self._restoreData(self.heatmapYVarCombo, yCurrent)
             return
         current = self.scatterXVarCombo.currentData()
-        self._populateSweepVariableCombo(self.scatterXVarCombo)
+        self._populateSweepVariableCombo(self.scatterXVarCombo, includeTime=True)
         self._restoreData(self.scatterXVarCombo, current)
 
     def _rebuildInstrumentCombo(self, combo: QComboBox) -> None:
         combo.clear()
+        allowTime = self._isTimeSweepSelected()
         for instId in sorted({ref.instrumentId for ref in self._availableVariables}):
+            if instId == "__time__" and not allowTime:
+                continue
             label = "Time" if instId == "__time__" else instId
             combo.addItem(label, userData=instId)
 
