@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from PySide6.QtCore import QEvent, QObject, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -157,6 +157,7 @@ class PlotDefinitionEditor(QWidget):
             )
         )
         self.yExprInsertButton.clicked.connect(self._insertScatterYToken)
+        self.yExprInsertButton.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.yAddExprButton.clicked.connect(lambda: self._addYExpressionRow())
         self._addYExpressionRow()
         self._onScatterYExprEdited()
@@ -207,6 +208,7 @@ class PlotDefinitionEditor(QWidget):
         )
         self.zNameLineEdit.textChanged.connect(lambda _text: self.changed.emit())
         self.zExprInsertButton.clicked.connect(self._insertHeatmapZToken)
+        self.zExprInsertButton.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
     def setAvailableVariables(self, availableVariables: list[PlotVariableRef]) -> None:
         self._availableVariables = availableVariables
@@ -678,6 +680,8 @@ class PlotDefinitionEditor(QWidget):
         if event.type() == QEvent.Type.FocusIn and isinstance(watched, QLineEdit):
             self._rememberFocusedLineEdit(watched)
         elif event.type() == QEvent.Type.FocusIn:
+            if self._isInsertButton(watched):
+                return super().eventFilter(watched, event)
             # Any non-text focus clears remembered text target.
             self._lastFocusedLineEdit = None
         elif (
