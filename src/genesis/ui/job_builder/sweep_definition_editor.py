@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from PySide6.QtCore import Signal
-from PySide6.QtGui import QWheelEvent
+from PySide6.QtGui import QDoubleValidator, QValidator, QWheelEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -17,13 +17,44 @@ from PySide6.QtWidgets import (
 
 
 class _NoWheelSpinBox(QSpinBox):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        edit = self.lineEdit()
+        if edit is not None:
+            edit.setMaxLength(32)
+
     def wheelEvent(self, event: QWheelEvent) -> None:
         event.ignore()
 
 
 class _NoWheelDoubleSpinBox(QDoubleSpinBox):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._validator = QDoubleValidator(self)
+        self._validator.setNotation(QDoubleValidator.Notation.ScientificNotation)
+        edit = self.lineEdit()
+        if edit is not None:
+            edit.setMaxLength(64)
+
     def wheelEvent(self, event: QWheelEvent) -> None:
         event.ignore()
+
+    def validate(self, text: str, pos: int) -> tuple[QValidator.State, str, int]:
+        stripped = text.strip()
+        if stripped in {"", "-", "+", ".", "-.", "+."}:
+            return (QValidator.State.Intermediate, text, pos)
+        self._validator.setRange(
+            float(self.minimum()), float(self.maximum()), max(16, int(self.decimals()))
+        )
+        state, _, _ = self._validator.validate(text, pos)
+        return (state, text, pos)
+
+    def valueFromText(self, text: str) -> float:
+        try:
+            value = float(text.strip())
+        except Exception:
+            return float(self.value())
+        return max(float(self.minimum()), min(float(self.maximum()), value))
 
 
 @dataclass(frozen=True, slots=True)
