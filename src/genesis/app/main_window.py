@@ -73,8 +73,9 @@ class MainWindow(QMainWindow):
         self._dataBasePath: Path | None = None
         self._dataExportFormat: str = "csv"
         self._currentSweepFilePath: Path | None = None
-        self._currentSweepRows: list[tuple[float, str, str, float]] = []
+        self._currentSweepRows: list[dict[str, float]] = []
         self._currentSweepLabel: str = ""
+        self._dataColumnKeys: list[tuple[str, str]] = []
         self._npyCheckpointEveryRows: int = 100
         self._initializedInstrumentsById: dict[str, Any] = {}
         self._initializedMeasurementKeysByInstrumentId: dict[str, list[str]] = {}
@@ -522,7 +523,7 @@ class MainWindow(QMainWindow):
         targetPath, exportFormat = exportTarget
         self._prepareDataExport(targetPath, exportFormat)
         if not self._initializedSweeps:
-            self._startSweepDataFile(1, "continuous")
+            self._startSweepDataFile("continuous")
 
         worker = AcquisitionWorker(
             instrumentsById=self._initializedInstrumentsById,
@@ -577,14 +578,13 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def _onSampleEmitted(
-        self, instrumentId: str, timestamp: float, values: dict
+        self, timestamp: float, valuesByInstrumentId: dict[str, dict[str, float]]
     ) -> None:
         self._latestTimestamp = float(timestamp)
-        allowedRawKeys = self._rawLogKeysByInstrumentId.get(str(instrumentId), set())
-        for key, val in values.items():
-            self._latestValues[(str(instrumentId), str(key))] = float(val)
-            if str(key) in allowedRawKeys:
-                self._appendDataRecord(timestamp, instrumentId, key, float(val))
+        for instrumentId, values in valuesByInstrumentId.items():
+            for key, val in values.items():
+                self._latestValues[(str(instrumentId), str(key))] = float(val)
+        self._appendDataRow(timestamp, valuesByInstrumentId)
 
         for idx, plotDef in enumerate(self._plotConfigs):
             widget = self._plotWidgetsByIndex.get(idx)
@@ -836,6 +836,7 @@ class MainWindow(QMainWindow):
         path.parent.mkdir(parents=True, exist_ok=True)
         self._dataBasePath = path
         self._dataExportFormat = exportFormat
+        self._dataColumnKeys = self._buildDataColumnKeys()
         self.statusLabel.setText(
             f"Raw export configured ({exportFormat.upper()}) at {path.parent}"
         )
@@ -858,20 +859,41 @@ class MainWindow(QMainWindow):
             self._dataFilePath = filePath
             self._dataFileHandle = filePath.open("w", newline="", encoding="utf8")
             self._dataCsvWriter = csv.writer(self._dataFileHandle)
-            self._dataCsvWriter.writerow(["timestamp", "instrumentId", "key", "value"])
+            header = ["timestamp"] + [
+                f"{instrumentId}:{key}" for instrumentId, key in self._dataColumnKeys
+            ]
+            self._dataCsvWriter.writerow(header)
         self.statusLabel.setText(f"Logging raw data: {filePath.name}")
 
-    def _appendDataRecord(
-        self, timestamp: float, instrumentId: str, key: str, value: float
+    def _buildDataColumnKeys(self) -> list[tuple[str, str]]:
+        keys: list[tuple[str, str]] = []
+        for instrumentId in sorted(self._rawLogKeysByInstrumentId.keys()):
+            for key in sorted(self._rawLogKeysByInstrumentId.get(instrumentId, set())):
+                # For time sweeps, the independent variable is represented by
+                # timestamp; omit duplicate __time__:time export columns.
+                if instrumentId == "__time__" and key == "time":
+                    continue
+                keys.append((instrumentId, key))
+        return keys
+
+    def _appendDataRow(
+        self, timestamp: float, valuesByInstrumentId: dict[str, dict[str, float]]
     ) -> None:
         if self._dataBasePath is None:
             return
-        row = (float(timestamp), str(instrumentId), str(key), float(value))
+        row: dict[str, float] = {"timestamp": float(timestamp)}
+        for instrumentId, key in self._dataColumnKeys:
+            value = valuesByInstrumentId.get(instrumentId, {}).get(key, float("nan"))
+            row[f"{instrumentId}:{key}"] = float(value)
         self._currentSweepRows.append(row)
         if self._dataExportFormat == "csv":
             if self._dataCsvWriter is None or self._dataFileHandle is None:
                 return
-            self._dataCsvWriter.writerow([row[0], row[1], row[2], row[3]])
+            csvRow = [row["timestamp"]] + [
+                row[f"{instrumentId}:{key}"]
+                for instrumentId, key in self._dataColumnKeys
+            ]
+            self._dataCsvWriter.writerow(csvRow)
             self._dataFileHandle.flush()
         else:
             if len(self._currentSweepRows) % self._npyCheckpointEveryRows == 0:
@@ -891,6 +913,7 @@ class MainWindow(QMainWindow):
         self._currentSweepFilePath = None
         self._currentSweepRows = []
         self._currentSweepLabel = ""
+        self._dataColumnKeys = []
 
     def _finalizeCurrentSweepFile(self) -> None:
         if self._currentSweepFilePath is None:
@@ -914,12 +937,18 @@ class MainWindow(QMainWindow):
             return
         rows = self._currentSweepRows
         payload = {
-            "timestamp": np.asarray([r[0] for r in rows], dtype=float),
-            "instrumentId": np.asarray([r[1] for r in rows], dtype=object),
-            "key": np.asarray([r[2] for r in rows], dtype=object),
-            "value": np.asarray([r[3] for r in rows], dtype=float),
+            "timestamp": np.asarray([r["timestamp"] for r in rows], dtype=float),
             "sweepLabel": np.asarray([self._currentSweepLabel], dtype=object),
+            "columns": np.asarray(
+                [f"{instrumentId}:{key}" for instrumentId, key in self._dataColumnKeys],
+                dtype=object,
+            ),
         }
+        for instrumentId, key in self._dataColumnKeys:
+            col = f"{instrumentId}:{key}"
+            payload[col] = np.asarray(
+                [r.get(col, float("nan")) for r in rows], dtype=float
+            )
         tmpPath = self._currentSweepFilePath.with_suffix(
             self._currentSweepFilePath.suffix + ".tmp"
         )

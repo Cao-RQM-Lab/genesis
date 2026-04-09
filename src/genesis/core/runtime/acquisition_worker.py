@@ -14,7 +14,7 @@ class AcquisitionSample(dict):
 
 
 class AcquisitionWorker(QObject):
-    sampleEmitted = Signal(str, float, dict)  # instrumentId, timestamp, values
+    sampleEmitted = Signal(float, dict)  # timestamp, valuesByInstrumentId
     statusMessage = Signal(str)
     sweepProgress = Signal(int, int, int, int, str)
 
@@ -99,13 +99,14 @@ class AcquisitionWorker(QObject):
             self._activeSweepValuesByInstrumentId.setdefault(instrumentId, {})[
                 key
             ] = point
+            stepTimestamp = time.time()
             # For time sweeps, point spacing itself defines the sample interval.
             # Do not add extra settle delay on top of that schedule.
             if not isTimeSweep:
                 self._sleepWithStop(settle)
             if self._shouldStop:
                 break
-            self._sampleAllInstruments(time.time())
+            self._sampleAllInstruments(stepTimestamp)
             self.sweepProgress.emit(1, 1, pointIndex, len(values), label)
 
     def _runNestedSweep2d(
@@ -190,16 +191,18 @@ class AcquisitionWorker(QObject):
                 self._activeSweepValuesByInstrumentId.setdefault(innerInstId, {})[
                     innerKey
                 ] = float(innerValue)
+                stepTimestamp = time.time()
                 # For time sweeps, point spacing itself defines timing.
                 if not innerIsTime:
                     self._sleepWithStop(innerSettle)
                 if self._shouldStop:
                     break
-                self._sampleAllInstruments(time.time())
+                self._sampleAllInstruments(stepTimestamp)
                 pointIndex += 1
                 self.sweepProgress.emit(1, 1, pointIndex, totalPoints, label)
 
     def _sampleAllInstruments(self, timestamp: float) -> None:
+        valuesByInstrumentId: dict[str, dict[str, float]] = {}
         for instrumentId, instrument in self.instrumentsById.items():
             keys = self.measurementKeysByInstrumentId.get(instrumentId, [])
             values: dict[str, float] = {}
@@ -214,13 +217,11 @@ class AcquisitionWorker(QObject):
             activeSweep = self._activeSweepValuesByInstrumentId.get(instrumentId, {})
             for key, val in activeSweep.items():
                 values[key] = float(val)
-
-            self.sampleEmitted.emit(instrumentId, timestamp, values)
+            valuesByInstrumentId[instrumentId] = values
         activeTimeSweep = self._activeSweepValuesByInstrumentId.get("__time__", {})
         if "time" in activeTimeSweep:
-            self.sampleEmitted.emit(
-                "__time__", timestamp, {"time": float(activeTimeSweep["time"])}
-            )
+            valuesByInstrumentId["__time__"] = {"time": float(activeTimeSweep["time"])}
+        self.sampleEmitted.emit(float(timestamp), valuesByInstrumentId)
 
     def _buildSweepValues(self, sweep: dict[str, Any]) -> np.ndarray:
         start = float(sweep.get("start", 0.0))
