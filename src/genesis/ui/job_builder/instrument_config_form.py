@@ -113,7 +113,6 @@ class InstrumentConfigForm(QWidget):
         if fieldType == "int":
             widget = _NoWheelSpinBox(self)
             widget.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
-            widget.setValue(int(value))
             if field.minValue is not None or field.maxValue is not None:
                 minValue = (
                     int(field.minValue) if field.minValue is not None else -2147483648
@@ -124,11 +123,11 @@ class InstrumentConfigForm(QWidget):
                 widget.setRange(minValue, maxValue)
             if field.stepValue is not None:
                 widget.setSingleStep(int(field.stepValue))
+            widget.setValue(int(value))
 
         elif fieldType == "float":
             widget = _NoWheelDoubleSpinBox(self)
             widget.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
-            widget.setValue(float(value))
             widget.setDecimals(16)
             if field.minValue is not None or field.maxValue is not None:
                 minValue = (
@@ -138,6 +137,7 @@ class InstrumentConfigForm(QWidget):
                 widget.setRange(minValue, maxValue)
             if field.stepValue is not None:
                 widget.setSingleStep(float(field.stepValue))
+            widget.setValue(float(value))
 
         elif fieldType == "bool":
             widget = QCheckBox(self)
