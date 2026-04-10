@@ -65,7 +65,10 @@ class HeatmapPlotWidget(QWidget):
         self.plotWidget.setLabel("left", self._yLabel)
         self.plotWidget.showGrid(x=True, y=True, alpha=0.2)
         view = self.plotWidget.getViewBox()
-        view.setAspectLocked(False)
+        if self._allowPopout:
+            view.setAspectLocked(True, ratio=1.0)
+        else:
+            view.setAspectLocked(False)
         view.enableAutoRange(x=False, y=False)
         if self._allowPopout:
             self.plotWidget.setSizePolicy(
@@ -113,8 +116,6 @@ class HeatmapPlotWidget(QWidget):
         # Avoid empty-image auto-level edge cases in pyqtgraph.
         self._image.setImage(np.zeros((1, 1), dtype=np.float64), autoLevels=False)
         self._image.setRect(QRectF(-0.5, -0.5, 1.0, 1.0))
-        if self._allowPopout:
-            self._updateSquareViewport()
         if self._popupHeatmap is not None:
             self._popupHeatmap.clearData()
 
@@ -174,10 +175,6 @@ class HeatmapPlotWidget(QWidget):
             rect=QRectF(xMin, yMin, width, height),
             padding=0.0,
         )
-        # In pop-out view, resizing here can trigger parent relayout growth loops
-        # while points stream in. Keep data updates independent from window sizing.
-        if self._allowPopout:
-            self._updateSquareViewport()
 
     def _estimateAxisStep(self, values: list[float]) -> float:
         if len(values) < 2:
@@ -195,35 +192,18 @@ class HeatmapPlotWidget(QWidget):
 
     def _updateSquareViewport(self) -> None:
         margins = self.contentsMargins()
-        parent = self.parentWidget()
-        baseWidth = (
-            parent.width()
-            if parent is not None and int(parent.width()) > 0
-            else self.width()
-        )
-        baseHeight = (
-            parent.height()
-            if parent is not None and int(parent.height()) > 0
-            else self.height()
-        )
         availableWidth = max(
             120,
-            int(baseWidth) - margins.left() - margins.right() - 12,
+            self.width() - margins.left() - margins.right() - 12,
         )
         controlsHeight = self._controlsWidget.sizeHint().height()
         availableHeight = max(
             120,
-            int(baseHeight) - margins.top() - margins.bottom() - controlsHeight - 16,
+            self.height() - margins.top() - margins.bottom() - controlsHeight - 16,
         )
-        ratio = max(1e-9, float(self._gridCols) / float(self._gridRows))
-        width = float(availableWidth)
-        height = float(availableHeight)
-        if width / max(1.0, height) > ratio:
-            width = height * ratio
-        else:
-            height = width / ratio
-        targetWidth = max(120, int(round(width)))
-        targetHeight = max(120, int(round(height)))
+        side = max(120, min(availableWidth, availableHeight))
+        targetWidth = side
+        targetHeight = side
         if (
             self.plotWidget.width() != targetWidth
             or self.plotWidget.height() != targetHeight
