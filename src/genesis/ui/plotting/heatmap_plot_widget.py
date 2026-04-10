@@ -96,6 +96,7 @@ class HeatmapPlotWidget(QWidget):
         self._bar.setImageItem(self._image)
 
         self.colormapCombo.currentIndexChanged.connect(self._onColormapChanged)
+        self._resetImageGrid()
         if self._allowPopout:
             self._updateSquareViewport()
 
@@ -113,9 +114,7 @@ class HeatmapPlotWidget(QWidget):
         self._xByKey.clear()
         self._yByKey.clear()
         self._zByKeyPair.clear()
-        # Avoid empty-image auto-level edge cases in pyqtgraph.
-        self._image.setImage(np.zeros((1, 1), dtype=np.float64), autoLevels=False)
-        self._image.setRect(QRectF(-0.5, -0.5, 1.0, 1.0))
+        self._resetImageGrid()
         if self._popupHeatmap is not None:
             self._popupHeatmap.clearData()
 
@@ -132,49 +131,104 @@ class HeatmapPlotWidget(QWidget):
     def _updateImage(self) -> None:
         xVals = sorted(self._xByKey.values())
         yVals = sorted(self._yByKey.values())
-        if not xVals or not yVals:
+        if not self._zByKeyPair:
             return
-        xIndex = {f"{v:.12g}": i for i, v in enumerate(xVals)}
-        yIndex = {f"{v:.12g}": i for i, v in enumerate(yVals)}
-        # ImageItem expects first axis as X and second axis as Y.
-        z = np.full((len(xVals), len(yVals)), np.nan, dtype=np.float64)
+
+        xMin, xMax, xCount = self._resolveAxisGrid(self._xBounds, xVals, self._gridCols)
+        yMin, yMax, yCount = self._resolveAxisGrid(self._yBounds, yVals, self._gridRows)
+        z = np.full((xCount, yCount), np.nan, dtype=np.float64)
+
+        xLookup: dict[str, int] | None = None
+        yLookup: dict[str, int] | None = None
+        if self._xBounds is None:
+            xLookup = {
+                f"{v:.12g}": i
+                for i, v in enumerate(sorted(self._xByKey.values())[:xCount])
+            }
+        if self._yBounds is None:
+            yLookup = {
+                f"{v:.12g}": i
+                for i, v in enumerate(sorted(self._yByKey.values())[:yCount])
+            }
+
         for (xKey, yKey), value in self._zByKeyPair.items():
-            xi = xIndex.get(xKey)
-            yi = yIndex.get(yKey)
+            xVal = self._xByKey.get(xKey)
+            yVal = self._yByKey.get(yKey)
+            if xVal is None or yVal is None:
+                continue
+            if xLookup is not None:
+                xi = xLookup.get(xKey)
+            else:
+                xi = self._valueToGridIndex(float(xVal), xMin, xMax, xCount)
+            if yLookup is not None:
+                yi = yLookup.get(yKey)
+            else:
+                yi = self._valueToGridIndex(float(yVal), yMin, yMax, yCount)
             if xi is None or yi is None:
                 continue
             z[xi, yi] = value
 
         self._image.setImage(z, autoLevels=True)
-        # Use real numeric sweep coordinates for axis scaling.
-        if self._xBounds is not None:
-            xMin = float(min(self._xBounds[0], self._xBounds[1]))
-            xMax = float(max(self._xBounds[0], self._xBounds[1]))
-            xStep = max(1e-12, xMax - xMin)
-        else:
-            xStep = self._estimateAxisStep(xVals)
-            xMin = float(xVals[0]) - (xStep / 2.0)
-            xMax = float(xVals[-1]) + (xStep / 2.0)
-        if self._yBounds is not None:
-            yMin = float(min(self._yBounds[0], self._yBounds[1]))
-            yMax = float(max(self._yBounds[0], self._yBounds[1]))
-            yStep = max(1e-12, yMax - yMin)
-        else:
-            yStep = self._estimateAxisStep(yVals)
-            yMin = float(yVals[0]) - (yStep / 2.0)
-            yMax = float(yVals[-1]) + (yStep / 2.0)
+        xStep = self._gridStep(xMin, xMax, xCount)
+        yStep = self._gridStep(yMin, yMax, yCount)
         width = max(xStep, xMax - xMin)
         height = max(yStep, yMax - yMin)
         self._image.setRect(QRectF(xMin, yMin, width, height))
 
-        # Let pyqtgraph generate numeric ticks (avoids categorical string-like axis behavior).
-        self.plotWidget.getAxis("bottom").setTicks([])
-        self.plotWidget.getAxis("left").setTicks([])
         view = self.plotWidget.getViewBox()
         view.setRange(
             rect=QRectF(xMin, yMin, width, height),
             padding=0.0,
         )
+
+    def _resetImageGrid(self) -> None:
+        xMin, xMax, xCount = self._resolveAxisGrid(self._xBounds, [], self._gridCols)
+        yMin, yMax, yCount = self._resolveAxisGrid(self._yBounds, [], self._gridRows)
+        z = np.full((xCount, yCount), np.nan, dtype=np.float64)
+        self._image.setImage(z, autoLevels=False)
+        xStep = self._gridStep(xMin, xMax, xCount)
+        yStep = self._gridStep(yMin, yMax, yCount)
+        width = max(xStep, xMax - xMin)
+        height = max(yStep, yMax - yMin)
+        rect = QRectF(xMin, yMin, width, height)
+        self._image.setRect(rect)
+        view = self.plotWidget.getViewBox()
+        view.setRange(rect=rect, padding=0.0)
+
+    def _resolveAxisGrid(
+        self, bounds: tuple[float, float] | None, values: list[float], pointCount: int
+    ) -> tuple[float, float, int]:
+        count = max(1, int(pointCount or 1))
+        if bounds is not None:
+            lower = float(min(bounds[0], bounds[1]))
+            upper = float(max(bounds[0], bounds[1]))
+            if lower == upper:
+                upper = lower + 1.0
+            return lower, upper, count
+        if values:
+            axisVals = sorted(float(v) for v in values)
+            step = self._estimateAxisStep(axisVals)
+            lower = float(axisVals[0]) - (step / 2.0)
+            upper = float(axisVals[-1]) + (step / 2.0)
+            count = max(count, len(axisVals))
+            return lower, upper, count
+        return -0.5, max(0.5, float(count) - 0.5), count
+
+    def _gridStep(self, lower: float, upper: float, count: int) -> float:
+        if count <= 1:
+            return max(1e-12, float(upper) - float(lower))
+        return max(1e-12, (float(upper) - float(lower)) / float(count - 1))
+
+    def _valueToGridIndex(
+        self, value: float, lower: float, upper: float, count: int
+    ) -> int | None:
+        if count <= 0:
+            return None
+        if count == 1:
+            return 0
+        step = self._gridStep(lower, upper, count)
+        raw = int(round((float(value) - float(lower)) / step))
+        return max(0, min(count - 1, raw))
 
     def _estimateAxisStep(self, values: list[float]) -> float:
         if len(values) < 2:
