@@ -99,21 +99,32 @@ class HeatmapPlotWidget(QWidget):
             z[yi, xi] = value
 
         self._image.setImage(z, autoLevels=True)
-        # Render on a unit grid so each heatmap cell is square by default.
-        width = float(len(xVals))
-        height = float(len(yVals))
-        self._image.setRect(QRectF(-0.5, -0.5, width, height))
 
-        # Force equal numeric span on both axes (same scale range).
-        span = max(width, height)
-        half = span / 2.0
-        xCenter = (width - 1.0) / 2.0
-        yCenter = (height - 1.0) / 2.0
+        # Map heatmap cells onto actual sweep coordinates (not pixel indices).
+        xStep = self._estimateAxisStep(xVals)
+        yStep = self._estimateAxisStep(yVals)
+        xMin = float(xVals[0]) - (xStep / 2.0)
+        xMax = float(xVals[-1]) + (xStep / 2.0)
+        yMin = float(yVals[0]) - (yStep / 2.0)
+        yMax = float(yVals[-1]) + (yStep / 2.0)
+        width = max(xStep, xMax - xMin)
+        height = max(yStep, yMax - yMin)
+        self._image.setRect(QRectF(xMin, yMin, width, height))
+
         view = self.plotWidget.getViewBox()
         view.setRange(
-            rect=QRectF(xCenter - half, yCenter - half, span, span),
+            rect=QRectF(xMin, yMin, width, height),
             padding=0.0,
         )
+
+    def _estimateAxisStep(self, values: list[float]) -> float:
+        if len(values) < 2:
+            return 1.0
+        diffs = [abs(float(b) - float(a)) for a, b in zip(values[:-1], values[1:])]
+        positive = [d for d in diffs if d > 0.0]
+        if not positive:
+            return 1.0
+        return float(np.median(np.asarray(positive, dtype=np.float64)))
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         self._updateSquareViewport()

@@ -1146,14 +1146,10 @@ class MainWindow(QMainWindow):
             return None
         axisType = str(axisDef.get("type", ""))
         if axisType == "time":
-            return self._elapsedSinceRunStart(self._latestTimestamp)
+            return self._latestValues.get(("__time__", "time"))
         if axisType == "var":
             instId = str(axisDef.get("instrumentId", ""))
             key = str(axisDef.get("key", ""))
-            # Treat __time__:time as the runtime timestamp (independent variable),
-            # not the configured sweep setpoint.
-            if instId == "__time__" and key == "time":
-                return self._elapsedSinceRunStart(self._latestTimestamp)
             valKey = (instId, key)
             return self._latestValues.get(valKey)
         if axisType == "expr":
