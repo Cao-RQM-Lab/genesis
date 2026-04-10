@@ -24,6 +24,8 @@ class HeatmapPlotWidget(QWidget):
         yLabel: str,
         xBounds: tuple[float, float] | None = None,
         yBounds: tuple[float, float] | None = None,
+        xPointCount: int | None = None,
+        yPointCount: int | None = None,
         allowPopout: bool = True,
         parent: QWidget | None = None,
     ) -> None:
@@ -36,8 +38,8 @@ class HeatmapPlotWidget(QWidget):
         self._zByKeyPair: dict[tuple[str, str], float] = {}
         self._xBounds = xBounds
         self._yBounds = yBounds
-        self._gridCols: int = 1
-        self._gridRows: int = 1
+        self._gridCols: int = max(1, int(xPointCount or 1))
+        self._gridRows: int = max(1, int(yPointCount or 1))
         self._allowPopout = bool(allowPopout)
         self._popupDialog: QDialog | None = None
         self._popupHeatmap: HeatmapPlotWidget | None = None
@@ -108,8 +110,6 @@ class HeatmapPlotWidget(QWidget):
         self._xByKey.clear()
         self._yByKey.clear()
         self._zByKeyPair.clear()
-        self._gridCols = 1
-        self._gridRows = 1
         # Avoid empty-image auto-level edge cases in pyqtgraph.
         self._image.setImage(np.zeros((1, 1), dtype=np.float64), autoLevels=False)
         self._image.setRect(QRectF(-0.5, -0.5, 1.0, 1.0))
@@ -133,8 +133,6 @@ class HeatmapPlotWidget(QWidget):
         yVals = sorted(self._yByKey.values())
         if not xVals or not yVals:
             return
-        self._gridCols = max(1, len(xVals))
-        self._gridRows = max(1, len(yVals))
         xIndex = {f"{v:.12g}": i for i, v in enumerate(xVals)}
         yIndex = {f"{v:.12g}": i for i, v in enumerate(yVals)}
         # ImageItem expects first axis as X and second axis as Y.
@@ -235,6 +233,8 @@ class HeatmapPlotWidget(QWidget):
             yLabel=self._yLabel,
             xBounds=self._xBounds,
             yBounds=self._yBounds,
+            xPointCount=self._gridCols,
+            yPointCount=self._gridRows,
             allowPopout=False,
             parent=dialog,
         )
