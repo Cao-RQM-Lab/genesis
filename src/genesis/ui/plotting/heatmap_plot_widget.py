@@ -65,15 +65,23 @@ class HeatmapPlotWidget(QWidget):
         view = self.plotWidget.getViewBox()
         view.setAspectLocked(False)
         view.enableAutoRange(x=False, y=False)
-        self.plotWidget.setSizePolicy(
-            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
-        )
-        plotRow = QHBoxLayout()
-        plotRow.setContentsMargins(0, 0, 0, 0)
-        plotRow.addStretch(1)
-        plotRow.addWidget(self.plotWidget)
-        plotRow.addStretch(1)
-        layout.addLayout(plotRow, 1)
+        if self._allowPopout:
+            self.plotWidget.setSizePolicy(
+                QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+            )
+        else:
+            self.plotWidget.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+            )
+        if self._allowPopout:
+            plotRow = QHBoxLayout()
+            plotRow.setContentsMargins(0, 0, 0, 0)
+            plotRow.addStretch(1)
+            plotRow.addWidget(self.plotWidget)
+            plotRow.addStretch(1)
+            layout.addLayout(plotRow, 1)
+        else:
+            layout.addWidget(self.plotWidget, 1)
 
         self._image = pg.ImageItem()
         self.plotWidget.addItem(self._image)
@@ -83,7 +91,8 @@ class HeatmapPlotWidget(QWidget):
         self._bar.setImageItem(self._image)
 
         self.colormapCombo.currentIndexChanged.connect(self._onColormapChanged)
-        self._updateSquareViewport()
+        if self._allowPopout:
+            self._updateSquareViewport()
 
     def appendPoint(self, x: float, y: float, z: float) -> None:
         xKey = f"{float(x):.12g}"
@@ -104,7 +113,8 @@ class HeatmapPlotWidget(QWidget):
         # Avoid empty-image auto-level edge cases in pyqtgraph.
         self._image.setImage(np.zeros((1, 1), dtype=np.float64), autoLevels=False)
         self._image.setRect(QRectF(-0.5, -0.5, 1.0, 1.0))
-        self._updateSquareViewport()
+        if self._allowPopout:
+            self._updateSquareViewport()
         if self._popupHeatmap is not None:
             self._popupHeatmap.clearData()
 
@@ -166,7 +176,10 @@ class HeatmapPlotWidget(QWidget):
             rect=QRectF(xMin, yMin, width, height),
             padding=0.0,
         )
-        self._updateSquareViewport()
+        # In pop-out view, resizing here can trigger parent relayout growth loops
+        # while points stream in. Keep data updates independent from window sizing.
+        if self._allowPopout:
+            self._updateSquareViewport()
 
     def _estimateAxisStep(self, values: list[float]) -> float:
         if len(values) < 2:
@@ -178,7 +191,8 @@ class HeatmapPlotWidget(QWidget):
         return float(np.median(np.asarray(positive, dtype=np.float64)))
 
     def resizeEvent(self, event: QResizeEvent) -> None:
-        self._updateSquareViewport()
+        if self._allowPopout:
+            self._updateSquareViewport()
         super().resizeEvent(event)
 
     def _updateSquareViewport(self) -> None:
