@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import csv
 import re
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -39,6 +38,11 @@ from genesis.core.runtime.expression_eval import (
 from genesis.core.runtime.acquisition_worker import (
     AcquisitionWorker,
     startAcquisitionThread,
+)
+from genesis.core.runtime.setpoint_safety import (
+    SetpointSafetyController,
+    ValueBounds,
+    build_value_bounds_by_instrument,
 )
 from genesis.core.transport.transport_factory import createTransport
 from genesis.ui.job_builder.job_builder_widget import JobBuilderWidget
@@ -83,6 +87,7 @@ class MainWindow(QMainWindow):
         self._rawLogKeysByInstrumentId: dict[str, set[str]] = {}
         self._initializedSweeps: list[dict[str, Any]] = []
         self._initializedJobId: str | None = None
+        self._setpointBoundsByInstrumentId: dict[str, dict[str, ValueBounds]] = {}
 
         self._setupUi()
 
@@ -216,8 +221,10 @@ class MainWindow(QMainWindow):
         if self.currentJob is None:
             self.statusLabel.setText("Sweep stopped.")
             return
-        # Stop acts as "stop + initialize again".
-        self._initializeInstrumentsFromJob(self.currentJob.rawDefinition)
+        if not self._initializedInstrumentsById:
+            self.statusLabel.setText("Sweep stopped.")
+            return
+        self._reinitializeActiveInstrumentsFromCurrentJob()
 
     def _clearPlots(self) -> None:
         self._plotConfigs.clear()
@@ -337,14 +344,18 @@ class MainWindow(QMainWindow):
         if self.runPlotsSplitter.count() > 0:
             self.runPlotsSplitter.setSizes([240] * self.runPlotsSplitter.count())
 
-    def _buildRuntimeFromJob(
-        self, jobDefinition: dict[str, Any]
-    ) -> tuple[dict[str, Any], dict[str, list[str]], list[dict[str, Any]]]:
+    def _buildRuntimeFromJob(self, jobDefinition: dict[str, Any]) -> tuple[
+        dict[str, Any],
+        dict[str, list[str]],
+        list[dict[str, Any]],
+        dict[str, dict[str, ValueBounds]],
+    ]:
         registry = InstrumentRegistry()
         loadBuiltInInstruments(registry)
 
         instrumentsById: dict[str, Any] = {}
         requiredKeysByInstrumentId: dict[str, set[str]] = {}
+        instrumentTypesById: dict[str, type[Any]] = {}
 
         # Collect signal keys required by plot definitions.
         for plotDef in jobDefinition.get("plots", []):
@@ -415,6 +426,9 @@ class MainWindow(QMainWindow):
             )
 
             instrumentsById[instrumentId] = instrument
+            instrumentTypesById[instrumentId] = registry.getInstrumentType(
+                instrumentTypeKey
+            )
 
             userMeasurementKeys = set(instDef.get("measurements", []))
             plotKeys = requiredKeysByInstrumentId.get(instrumentId, set())
@@ -430,6 +444,7 @@ class MainWindow(QMainWindow):
                 for instId, keys in requiredKeysByInstrumentId.items()
             },
             list(jobDefinition.get("sweeps", [])),
+            build_value_bounds_by_instrument(instrumentTypesById),
         )
 
     def _initializeInstrumentsFromJob(self, jobDefinition: dict[str, Any]) -> None:
@@ -444,6 +459,7 @@ class MainWindow(QMainWindow):
                 instrumentsById,
                 measurementKeysByInstrumentId,
                 sweeps,
+                setpointBoundsByInstrumentId,
             ) = self._buildRuntimeFromJob(jobDefinition)
         except Exception as exc:
             self.statusLabel.setText(f"Initialize failed: {exc}")
@@ -455,7 +471,11 @@ class MainWindow(QMainWindow):
             if instId and key:
                 sweptPairs.add((instId, key))
 
-        # Apply all configured instrument values.
+        safety = SetpointSafetyController(setpointBoundsByInstrumentId)
+        for (instId, key), value in self._latestValues.items():
+            safety.seed_last_value(str(instId), str(key), float(value))
+
+        # Apply all configured non-swept instrument values (bounded).
         for instDef in jobDefinition.get("instruments", []):
             instrumentId = str(instDef.get("id", ""))
             instrument = instrumentsById.get(instrumentId)
@@ -467,22 +487,18 @@ class MainWindow(QMainWindow):
                     # Swept keys are set later with optional slew-rate limiting.
                     continue
                 try:
-                    instrument.applyConfigValue(str(key), value)
+                    safety.apply_bounded_immediate(
+                        instrument_id=instrumentId,
+                        instrument=instrument,
+                        key=str(key),
+                        value=value,
+                    )
                 except Exception as exc:
                     self.statusLabel.setText(
                         f"Initialize failed at {instrumentId}:{key}: {exc}"
                     )
                     self._closeInitializedInstruments()
                     return
-
-            try:
-                instrument.initialize()
-            except NotImplementedError:
-                pass
-            except Exception as exc:
-                self.statusLabel.setText(f"Initialize failed at {instrumentId}: {exc}")
-                self._closeInitializedInstruments()
-                return
 
         # Initialize each sweep variable to its first point.
         for sweep in sweeps:
@@ -499,14 +515,16 @@ class MainWindow(QMainWindow):
             if len(values) == 0:
                 continue
             target = float(values[0])
-            start = self._latestValues.get((instId, key), target)
             try:
-                self._applySetpointWithOptionalSlew(
+                safety.apply_slew_limited(
+                    instrument_id=instId,
                     instrument=instrument,
                     key=key,
-                    startValue=float(start),
-                    targetValue=target,
-                    maxSlewRate=float(sweep.get("maxSlewRate", 0.0)),
+                    target_value=target,
+                    max_slew_rate=float(sweep.get("maxSlewRate", 0.0)),
+                    max_slew_step=float(
+                        sweep.get("maxSlewStep", sweep.get("stepSize", 0.0))
+                    ),
                 )
             except Exception as exc:
                 self.statusLabel.setText(
@@ -529,6 +547,7 @@ class MainWindow(QMainWindow):
             rawLogKeysByInstrumentId.setdefault(instId, set()).add(key)
         self._rawLogKeysByInstrumentId = rawLogKeysByInstrumentId
         self._initializedSweeps = sweeps
+        self._setpointBoundsByInstrumentId = setpointBoundsByInstrumentId
         self._initializedJobId = str(jobDefinition.get("jobId", ""))
         self.statusLabel.setText("Initialization Complete. Ready to Start Sweep.")
         self.sweepProgressLabel.setText("Sweep Progress: Ready")
@@ -556,6 +575,7 @@ class MainWindow(QMainWindow):
             sweeps=self._initializedSweeps,
             intervalSeconds=0.2,
             initialSweepValuesByInstrumentId=self._initialSweepValuesByInstrumentId(),
+            boundsByInstrumentId=self._setpointBoundsByInstrumentId,
         )
         thread, worker = startAcquisitionThread(worker)
         worker.sampleEmitted.connect(self._onSampleEmitted)
@@ -587,6 +607,7 @@ class MainWindow(QMainWindow):
         self._initializedMeasurementKeysByInstrumentId = {}
         self._rawLogKeysByInstrumentId = {}
         self._initializedSweeps = []
+        self._setpointBoundsByInstrumentId = {}
 
     def _applySafeStateToInitializedInstruments(self) -> None:
         for instrumentId, instrument in self._initializedInstrumentsById.items():
@@ -610,31 +631,82 @@ class MainWindow(QMainWindow):
             valuesByInstrumentId.setdefault(instId, {})[key] = float(val)
         return valuesByInstrumentId
 
-    def _applySetpointWithOptionalSlew(
-        self,
-        instrument: Any,
-        key: str,
-        startValue: float,
-        targetValue: float,
-        maxSlewRate: float,
-    ) -> None:
-        delta = float(targetValue) - float(startValue)
-        rate = float(maxSlewRate)
-        if abs(delta) <= 0.0 or rate <= 0.0:
-            instrument.applyConfigValue(key, float(targetValue))
+    def _reinitializeActiveInstrumentsFromCurrentJob(self) -> None:
+        if self.currentJob is None:
+            self.statusLabel.setText("Sweep stopped.")
             return
-        totalSeconds = abs(delta) / rate
-        if totalSeconds <= 0.0:
-            instrument.applyConfigValue(key, float(targetValue))
-            return
-        stepSeconds = 0.05
-        steps = max(1, int(np.ceil(totalSeconds / stepSeconds)))
-        for idx in range(1, steps + 1):
-            fraction = idx / steps
-            value = float(startValue) + delta * fraction
-            instrument.applyConfigValue(key, float(value))
-            if idx < steps:
-                time.sleep(totalSeconds / steps)
+        jobDefinition = self.currentJob.rawDefinition
+        sweeps = [s for s in jobDefinition.get("sweeps", []) if isinstance(s, dict)]
+        sweptPairs: set[tuple[str, str]] = set()
+        for sweep in sweeps:
+            instId = str(sweep.get("instrumentId", ""))
+            key = str(sweep.get("key", ""))
+            if instId and key:
+                sweptPairs.add((instId, key))
+
+        safety = SetpointSafetyController(self._setpointBoundsByInstrumentId)
+        for (instId, key), value in self._latestValues.items():
+            safety.seed_last_value(str(instId), str(key), float(value))
+
+        # Apply non-swept config values immediately (bounded).
+        for instDef in jobDefinition.get("instruments", []):
+            instrumentId = str(instDef.get("id", ""))
+            instrument = self._initializedInstrumentsById.get(instrumentId)
+            if instrument is None:
+                continue
+            for key, value in dict(instDef.get("config", {})).items():
+                if (instrumentId, str(key)) in sweptPairs:
+                    continue
+                try:
+                    safety.apply_bounded_immediate(
+                        instrument_id=instrumentId,
+                        instrument=instrument,
+                        key=str(key),
+                        value=value,
+                    )
+                except Exception as exc:
+                    self.statusLabel.setText(
+                        f"Stop re-init failed at {instrumentId}:{key}: {exc}"
+                    )
+                    return
+
+        # Return swept variables to initialized first point using slew limits.
+        for sweep in sweeps:
+            instId = str(sweep.get("instrumentId", ""))
+            key = str(sweep.get("key", ""))
+            if not instId or not key:
+                continue
+            if instId == "__time__" and key == "time":
+                continue
+            instrument = self._initializedInstrumentsById.get(instId)
+            if instrument is None:
+                continue
+            values = self._buildSweepValues(sweep)
+            if len(values) == 0:
+                continue
+            target = float(values[0])
+            try:
+                safety.apply_slew_limited(
+                    instrument_id=instId,
+                    instrument=instrument,
+                    key=key,
+                    target_value=target,
+                    max_slew_rate=float(sweep.get("maxSlewRate", 0.0)),
+                    max_slew_step=float(
+                        sweep.get("maxSlewStep", sweep.get("stepSize", 0.0))
+                    ),
+                )
+            except Exception as exc:
+                self.statusLabel.setText(
+                    f"Stop re-init failed at sweep {instId}:{key}: {exc}"
+                )
+                return
+            self._latestValues[(instId, key)] = target
+
+        self._initializedJobId = str(jobDefinition.get("jobId", ""))
+        self.sweepProgressLabel.setText("Sweep Progress: Ready")
+        self.sweepProgressBar.setValue(0)
+        self.statusLabel.setText("Sweep stopped. Returned to initialized state.")
 
     def closeEvent(self, event: QCloseEvent) -> None:
         # Best-effort durability on app close.

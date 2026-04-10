@@ -7,6 +7,7 @@ import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal
 
 from genesis.core.instrument.base_instrument import BaseInstrument
+from genesis.core.runtime.setpoint_safety import SetpointSafetyController, ValueBounds
 
 
 class AcquisitionSample(dict):
@@ -25,6 +26,7 @@ class AcquisitionWorker(QObject):
         sweeps: list[dict[str, Any]] | None = None,
         intervalSeconds: float = 0.2,
         initialSweepValuesByInstrumentId: dict[str, dict[str, float]] | None = None,
+        boundsByInstrumentId: dict[str, dict[str, ValueBounds]] | None = None,
     ) -> None:
         super().__init__()
         self.instrumentsById = instrumentsById
@@ -37,6 +39,8 @@ class AcquisitionWorker(QObject):
             for instId, values in (initialSweepValuesByInstrumentId or {}).items()
             if isinstance(values, dict)
         }
+        self._safety = SetpointSafetyController(boundsByInstrumentId)
+        self._safety.seed_last_values(self._activeSweepValuesByInstrumentId)
 
     def requestStop(self) -> None:
         self._shouldStop = True
@@ -96,12 +100,16 @@ class AcquisitionWorker(QObject):
                 self._sleepUntilOrStop(target)
             else:
                 try:
-                    slewCompleted = self._setSweepValueWithSlew(
-                        instrumentId=instrumentId,
+                    slewCompleted = self._safety.apply_slew_limited(
+                        instrument_id=instrumentId,
                         instrument=instrument,
                         key=key,
-                        targetValue=float(point),
-                        maxSlewRate=float(sweep.get("maxSlewRate", 0.0)),
+                        target_value=float(point),
+                        max_slew_rate=float(sweep.get("maxSlewRate", 0.0)),
+                        max_slew_step=float(
+                            sweep.get("maxSlewStep", sweep.get("stepSize", 0.0))
+                        ),
+                        should_stop=lambda: self._shouldStop,
                     )
                     if not slewCompleted:
                         break
@@ -170,12 +178,18 @@ class AcquisitionWorker(QObject):
                 self._sleepUntilOrStop(outerTarget)
             else:
                 try:
-                    slewCompleted = self._setSweepValueWithSlew(
-                        instrumentId=outerInstId,
+                    slewCompleted = self._safety.apply_slew_limited(
+                        instrument_id=outerInstId,
                         instrument=outerInstrument,
                         key=outerKey,
-                        targetValue=float(outerValue),
-                        maxSlewRate=float(outerSweep.get("maxSlewRate", 0.0)),
+                        target_value=float(outerValue),
+                        max_slew_rate=float(outerSweep.get("maxSlewRate", 0.0)),
+                        max_slew_step=float(
+                            outerSweep.get(
+                                "maxSlewStep", outerSweep.get("stepSize", 0.0)
+                            )
+                        ),
+                        should_stop=lambda: self._shouldStop,
                     )
                     if not slewCompleted:
                         break
@@ -202,12 +216,18 @@ class AcquisitionWorker(QObject):
                     self._sleepUntilOrStop(innerTarget)
                 else:
                     try:
-                        slewCompleted = self._setSweepValueWithSlew(
-                            instrumentId=innerInstId,
+                        slewCompleted = self._safety.apply_slew_limited(
+                            instrument_id=innerInstId,
                             instrument=innerInstrument,
                             key=innerKey,
-                            targetValue=float(innerValue),
-                            maxSlewRate=float(innerSweep.get("maxSlewRate", 0.0)),
+                            target_value=float(innerValue),
+                            max_slew_rate=float(innerSweep.get("maxSlewRate", 0.0)),
+                            max_slew_step=float(
+                                innerSweep.get(
+                                    "maxSlewStep", innerSweep.get("stepSize", 0.0)
+                                )
+                            ),
+                            should_stop=lambda: self._shouldStop,
                         )
                         if not slewCompleted:
                             break
@@ -278,44 +298,6 @@ class AcquisitionWorker(QObject):
     def _sleepUntilOrStop(self, targetTime: float) -> None:
         while not self._shouldStop and time.time() < targetTime:
             time.sleep(min(0.05, targetTime - time.time()))
-
-    def _setSweepValueWithSlew(
-        self,
-        instrumentId: str,
-        instrument: BaseInstrument,
-        key: str,
-        targetValue: float,
-        maxSlewRate: float,
-    ) -> bool:
-        currentValue = self._activeSweepValuesByInstrumentId.get(instrumentId, {}).get(
-            key, None
-        )
-        if currentValue is None:
-            instrument.applyConfigValue(key, targetValue)
-            return True
-
-        delta = float(targetValue) - float(currentValue)
-        maxRate = float(maxSlewRate)
-        if abs(delta) <= 0.0 or maxRate <= 0.0:
-            instrument.applyConfigValue(key, targetValue)
-            return True
-
-        totalSeconds = abs(delta) / maxRate
-        if totalSeconds <= 0.0:
-            instrument.applyConfigValue(key, targetValue)
-            return True
-
-        stepSeconds = 0.05
-        rampSteps = max(1, int(np.ceil(totalSeconds / stepSeconds)))
-        for idx in range(1, rampSteps + 1):
-            if self._shouldStop:
-                return False
-            fraction = idx / rampSteps
-            value = float(currentValue) + delta * fraction
-            instrument.applyConfigValue(key, value)
-            if idx < rampSteps:
-                self._sleepWithStop(totalSeconds / rampSteps)
-        return True
 
 
 def startAcquisitionThread(

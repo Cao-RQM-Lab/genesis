@@ -95,6 +95,7 @@ class SweepDefinitionEditor(QWidget):
         self.outerSpacingCombo = NoWheelComboBox(self)
         self.outerSettleTimeSpin = _NoWheelDoubleSpinBox(self)
         self.outerMaxSlewRateSpin = _NoWheelDoubleSpinBox(self)
+        self.outerMaxSlewStepSpin = _NoWheelDoubleSpinBox(self)
 
         self.innerGroup = QGroupBox("Inner Sweep", self)
         self.innerInstrumentCombo = NoWheelComboBox(self.innerGroup)
@@ -106,6 +107,7 @@ class SweepDefinitionEditor(QWidget):
         self.innerSpacingCombo = NoWheelComboBox(self.innerGroup)
         self.innerSettleTimeSpin = _NoWheelDoubleSpinBox(self.innerGroup)
         self.innerMaxSlewRateSpin = _NoWheelDoubleSpinBox(self.innerGroup)
+        self.innerMaxSlewStepSpin = _NoWheelDoubleSpinBox(self.innerGroup)
 
         self._setupUi()
         self.setAvailableVariables(availableVariables)
@@ -132,6 +134,7 @@ class SweepDefinitionEditor(QWidget):
             self.outerStepSizeSpin,
             self.outerSettleTimeSpin,
             self.outerMaxSlewRateSpin,
+            self.outerMaxSlewStepSpin,
             self.outerSpacingCombo,
         )
         self._configureSweepControls(
@@ -141,6 +144,7 @@ class SweepDefinitionEditor(QWidget):
             self.innerStepSizeSpin,
             self.innerSettleTimeSpin,
             self.innerMaxSlewRateSpin,
+            self.innerMaxSlewStepSpin,
             self.innerSpacingCombo,
         )
 
@@ -152,6 +156,7 @@ class SweepDefinitionEditor(QWidget):
         outerForm.addRow("Step Size", self.outerStepSizeSpin)
         outerForm.addRow("Settle Time (s)", self.outerSettleTimeSpin)
         outerForm.addRow("Maximum Slew Rate (/s)", self.outerMaxSlewRateSpin)
+        outerForm.addRow("Maximum Slew Step (/step)", self.outerMaxSlewStepSpin)
         outerForm.addRow("Spacing", self.outerSpacingCombo)
 
         innerForm = QFormLayout(self.innerGroup)
@@ -163,6 +168,7 @@ class SweepDefinitionEditor(QWidget):
         innerForm.addRow("Step Size", self.innerStepSizeSpin)
         innerForm.addRow("Settle Time (s)", self.innerSettleTimeSpin)
         innerForm.addRow("Maximum Slew Rate (/s)", self.innerMaxSlewRateSpin)
+        innerForm.addRow("Maximum Slew Step (/step)", self.innerMaxSlewStepSpin)
         innerForm.addRow("Spacing", self.innerSpacingCombo)
 
         self.modeCombo.currentIndexChanged.connect(self._onModeComboChanged)
@@ -198,6 +204,7 @@ class SweepDefinitionEditor(QWidget):
         )
         self.outerSettleTimeSpin.valueChanged.connect(lambda _v: self.changed.emit())
         self.outerMaxSlewRateSpin.valueChanged.connect(lambda _v: self.changed.emit())
+        self.outerMaxSlewStepSpin.valueChanged.connect(lambda _v: self.changed.emit())
         self.outerSpacingCombo.currentIndexChanged.connect(
             lambda _idx: self._onSpacingChanged("outer")
         )
@@ -216,6 +223,7 @@ class SweepDefinitionEditor(QWidget):
         )
         self.innerSettleTimeSpin.valueChanged.connect(lambda _v: self.changed.emit())
         self.innerMaxSlewRateSpin.valueChanged.connect(lambda _v: self.changed.emit())
+        self.innerMaxSlewStepSpin.valueChanged.connect(lambda _v: self.changed.emit())
         self.innerSpacingCombo.currentIndexChanged.connect(
             lambda _idx: self._onSpacingChanged("inner")
         )
@@ -238,6 +246,7 @@ class SweepDefinitionEditor(QWidget):
         stepSizeSpin: _NoWheelDoubleSpinBox,
         settleTimeSpin: _NoWheelDoubleSpinBox,
         maxSlewRateSpin: _NoWheelDoubleSpinBox,
+        maxSlewStepSpin: _NoWheelDoubleSpinBox,
         spacingCombo: QComboBox,
     ) -> None:
         startSpin.setDecimals(16)
@@ -258,6 +267,11 @@ class SweepDefinitionEditor(QWidget):
         maxSlewRateSpin.setRange(0.0, 1e12)
         maxSlewRateSpin.setSingleStep(0.1)
         maxSlewRateSpin.setValue(0.0)
+        maxSlewStepSpin.setDecimals(16)
+        maxSlewStepSpin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
+        maxSlewStepSpin.setRange(1e-12, 1e12)
+        maxSlewStepSpin.setSingleStep(0.001)
+        maxSlewStepSpin.setValue(0.01)
         pointsSpin.setRange(2, 100000)
         pointsSpin.setValue(101)
         stepSizeSpin.setDecimals(16)
@@ -454,8 +468,10 @@ class SweepDefinitionEditor(QWidget):
             start = float(self.outerStartSpin.value())
             stop = float(self.outerStopSpin.value())
             points = int(self.outerPointsSpin.value())
+            stepSize = float(self.outerStepSizeSpin.value())
             settle = float(self.outerSettleTimeSpin.value())
             maxSlewRate = float(self.outerMaxSlewRateSpin.value())
+            maxSlewStep = float(self.outerMaxSlewStepSpin.value())
             spacing = str(self.outerSpacingCombo.currentData() or "linear")
         else:
             inst = str(self.innerInstrumentCombo.currentData() or "")
@@ -463,8 +479,10 @@ class SweepDefinitionEditor(QWidget):
             start = float(self.innerStartSpin.value())
             stop = float(self.innerStopSpin.value())
             points = int(self.innerPointsSpin.value())
+            stepSize = float(self.innerStepSizeSpin.value())
             settle = float(self.innerSettleTimeSpin.value())
             maxSlewRate = float(self.innerMaxSlewRateSpin.value())
+            maxSlewStep = float(self.innerMaxSlewStepSpin.value())
             spacing = str(self.innerSpacingCombo.currentData() or "linear")
         return {
             "instrumentId": inst,
@@ -472,8 +490,10 @@ class SweepDefinitionEditor(QWidget):
             "start": start,
             "stop": stop,
             "points": points,
+            "stepSize": abs(stepSize),
             "settleTimeSeconds": settle,
             "maxSlewRate": max(0.0, maxSlewRate),
+            "maxSlewStep": max(1e-12, abs(maxSlewStep)),
             "spacing": spacing,
         }
 
@@ -511,6 +531,7 @@ class SweepDefinitionEditor(QWidget):
             stepSizeSpin = self.outerStepSizeSpin
             settleSpin = self.outerSettleTimeSpin
             maxSlewRateSpin = self.outerMaxSlewRateSpin
+            maxSlewStepSpin = self.outerMaxSlewStepSpin
             spacingCombo = self.outerSpacingCombo
         else:
             instCombo = self.innerInstrumentCombo
@@ -522,6 +543,7 @@ class SweepDefinitionEditor(QWidget):
             stepSizeSpin = self.innerStepSizeSpin
             settleSpin = self.innerSettleTimeSpin
             maxSlewRateSpin = self.innerMaxSlewRateSpin
+            maxSlewStepSpin = self.innerMaxSlewStepSpin
             spacingCombo = self.innerSpacingCombo
 
         self._restoreData(instCombo, definition.get("instrumentId"))
@@ -539,6 +561,13 @@ class SweepDefinitionEditor(QWidget):
             settleSpin.setValue(float(definition["settleTimeSeconds"]))
         if "maxSlewRate" in definition:
             maxSlewRateSpin.setValue(max(0.0, float(definition["maxSlewRate"])))
+        if "maxSlewStep" in definition:
+            maxSlewStepSpin.setValue(max(1e-12, float(definition["maxSlewStep"])))
+        else:
+            # Backward-compat: old jobs use stepSize as slew increment.
+            maxSlewStepSpin.setValue(
+                max(1e-12, float(definition.get("stepSize", 0.01)))
+            )
         self._restoreData(spacingCombo, definition.get("spacing"))
         self._updateLinearControlsEnabled(which)
         if "stepSize" not in definition:

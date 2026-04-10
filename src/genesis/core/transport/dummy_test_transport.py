@@ -16,6 +16,7 @@ class DummyTestTransport(BaseTransport):
     def __init__(self, resourceName: str, settings: dict | None = None) -> None:
         super().__init__(resourceName=resourceName, settings=settings)
         self._isOpen = False
+        self.writtenCommands: list[str] = []
 
     def open(self) -> None:
         self._isOpen = True
@@ -27,6 +28,7 @@ class DummyTestTransport(BaseTransport):
         self._isOpen = False
 
     def write(self, command: str) -> None:
+        self.writtenCommands.append(str(command))
         print(f"[dummy-test:{self.resourceName}] WRITE {command}")
 
     def read(self) -> str:
