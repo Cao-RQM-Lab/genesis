@@ -14,3 +14,11 @@ repos:
     -   id: mixed-line-ending
         args: [--fix=lf]
     -   id: trailing-whitespace
+-   repo: local
+    hooks:
+    -   id: unit-tests
+        name: unit-tests
+        entry: ./venv/bin/python -m unittest discover -s tests -p test_*.py
+        language: system
+        pass_filenames: false
+        always_run: true
