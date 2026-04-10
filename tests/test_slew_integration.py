@@ -164,6 +164,57 @@ class SlewIntegrationTests(unittest.TestCase):
         # point1 writes 0.0; point2 should write directly to 0.05 once.
         self.assertEqual(writes[-1], 0.05)
 
+    def test_worker_accepts_nested_2d_sweep_definition(self) -> None:
+        transport = DummyTestTransport("DUMMY")
+        instrument = B29xxInstrument(
+            name="smu",
+            transport=transport,
+            jobConfig={"channel": 1, "forceMode": "VOLT"},
+        )
+        sweeps = [
+            {
+                "mode": "2d",
+                "outer": {
+                    "instrumentId": "smu",
+                    "key": "forceVoltageLevelV",
+                    "start": 0.0,
+                    "stop": 0.1,
+                    "points": 2,
+                    "settleTimeSeconds": 0.0,
+                    "spacing": "linear",
+                    "stepSize": 0.1,
+                    "maxSlewRate": 0.0,
+                    "maxSlewStep": 0.1,
+                },
+                "inner": {
+                    "instrumentId": "smu",
+                    "key": "forceVoltageLevelV",
+                    "start": 0.1,
+                    "stop": 0.0,
+                    "points": 2,
+                    "settleTimeSeconds": 0.0,
+                    "spacing": "linear",
+                    "stepSize": 0.1,
+                    "maxSlewRate": 0.0,
+                    "maxSlewStep": 0.1,
+                },
+            }
+        ]
+        worker = AcquisitionWorker(
+            instrumentsById={"smu": instrument},
+            measurementKeysByInstrumentId={"smu": []},
+            sweeps=sweeps,
+            intervalSeconds=0.0,
+            initialSweepValuesByInstrumentId={"smu": {"forceVoltageLevelV": 0.0}},
+            boundsByInstrumentId=build_value_bounds_by_instrument(
+                {"smu": B29xxInstrument}
+            ),
+        )
+        completed = worker._runConfiguredSweep()
+        self.assertTrue(completed)
+        writes = _extract_smu_voltage_writes(transport.writtenCommands)
+        self.assertGreaterEqual(len(writes), 4)
+
     def test_abort_interrupts_worker_slew(self) -> None:
         transport = DummyTestTransport("DUMMY")
         instrument = B29xxInstrument(

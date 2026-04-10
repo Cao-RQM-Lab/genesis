@@ -67,7 +67,7 @@ class AcquisitionWorker(QObject):
         self.statusMessage.emit("Data acquisition loop ended.")
 
     def _runConfiguredSweep(self) -> bool:
-        configured = [s for s in self.sweeps if isinstance(s, dict)]
+        configured = self._normalizedSweeps()
         if len(configured) == 1:
             return self._runSingleSweep(configured[0])
         if len(configured) == 2:
@@ -76,6 +76,27 @@ class AcquisitionWorker(QObject):
             f"Skipping sweep: nested depth {len(configured)} is unsupported."
         )
         return False
+
+    def _normalizedSweeps(self) -> list[dict[str, Any]]:
+        configured: list[dict[str, Any]] = []
+        for rawSweep in self.sweeps:
+            if not isinstance(rawSweep, dict):
+                continue
+            # Backward-compat: support nested 2D sweep objects:
+            # {"mode":"2d","outer":{...},"inner":{...}}
+            if isinstance(rawSweep.get("outer"), dict):
+                outer = dict(rawSweep.get("outer", {}))
+                if outer:
+                    configured.append(outer)
+                if str(rawSweep.get("mode", "1d")) == "2d" and isinstance(
+                    rawSweep.get("inner"), dict
+                ):
+                    inner = dict(rawSweep.get("inner", {}))
+                    if inner:
+                        configured.append(inner)
+                continue
+            configured.append(rawSweep)
+        return configured
 
     def _runSingleSweep(
         self,

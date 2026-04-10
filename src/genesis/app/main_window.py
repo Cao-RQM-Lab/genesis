@@ -859,10 +859,13 @@ class MainWindow(QMainWindow):
 
     def _clearRunPlotData(self) -> None:
         for widget in self._plotWidgetsByIndex.values():
-            if isinstance(widget, XyPlotWidget):
-                widget.clearData()
-            elif isinstance(widget, HeatmapPlotWidget):
-                widget.clearData()
+            try:
+                if isinstance(widget, XyPlotWidget):
+                    widget.clearData()
+                elif isinstance(widget, HeatmapPlotWidget):
+                    widget.clearData()
+            except Exception as exc:
+                self.statusLabel.setText(f"Plot reset warning: {exc}")
 
     def _stopAcquisition(self) -> bool:
         worker = self._acqWorker

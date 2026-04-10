@@ -73,7 +73,9 @@ class HeatmapPlotWidget(QWidget):
         self._xByKey.clear()
         self._yByKey.clear()
         self._zByKeyPair.clear()
-        self._image.setImage(np.asarray([[]], dtype=np.float64), autoLevels=True)
+        # Avoid empty-image auto-level edge cases in pyqtgraph.
+        self._image.setImage(np.zeros((1, 1), dtype=np.float64), autoLevels=False)
+        self._image.setRect(QRectF(-0.5, -0.5, 1.0, 1.0))
 
     def _onColormapChanged(self, _idx: int) -> None:
         name = str(self.colormapCombo.currentData() or "viridis")
