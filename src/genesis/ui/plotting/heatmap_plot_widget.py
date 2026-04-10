@@ -90,13 +90,14 @@ class HeatmapPlotWidget(QWidget):
             return
         xIndex = {f"{v:.12g}": i for i, v in enumerate(xVals)}
         yIndex = {f"{v:.12g}": i for i, v in enumerate(yVals)}
-        z = np.full((len(yVals), len(xVals)), np.nan, dtype=np.float64)
+        # ImageItem expects first axis as X and second axis as Y.
+        z = np.full((len(xVals), len(yVals)), np.nan, dtype=np.float64)
         for (xKey, yKey), value in self._zByKeyPair.items():
             xi = xIndex.get(xKey)
             yi = yIndex.get(yKey)
             if xi is None or yi is None:
                 continue
-            z[yi, xi] = value
+            z[xi, yi] = value
 
         self._image.setImage(z, autoLevels=True)
         width = float(len(xVals))
