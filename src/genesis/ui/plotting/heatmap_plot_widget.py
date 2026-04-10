@@ -195,14 +195,25 @@ class HeatmapPlotWidget(QWidget):
 
     def _updateSquareViewport(self) -> None:
         margins = self.contentsMargins()
+        parent = self.parentWidget()
+        baseWidth = (
+            parent.width()
+            if parent is not None and int(parent.width()) > 0
+            else self.width()
+        )
+        baseHeight = (
+            parent.height()
+            if parent is not None and int(parent.height()) > 0
+            else self.height()
+        )
         availableWidth = max(
             120,
-            self.width() - margins.left() - margins.right() - 12,
+            int(baseWidth) - margins.left() - margins.right() - 12,
         )
         controlsHeight = self._controlsWidget.sizeHint().height()
         availableHeight = max(
             120,
-            self.height() - margins.top() - margins.bottom() - controlsHeight - 16,
+            int(baseHeight) - margins.top() - margins.bottom() - controlsHeight - 16,
         )
         ratio = max(1e-9, float(self._gridCols) / float(self._gridRows))
         width = float(availableWidth)
