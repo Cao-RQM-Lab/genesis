@@ -168,7 +168,7 @@ class HeatmapPlotWidget(QWidget):
                 continue
             z[xi, yi] = value
 
-        self._image.setImage(z, autoLevels=True)
+        self._image.setImage(self._displayImageData(z), autoLevels=True)
         xStep = self._gridStep(xMin, xMax, xCount)
         yStep = self._gridStep(yMin, yMax, yCount)
         width = max(xStep, xMax - xMin)
@@ -185,7 +185,7 @@ class HeatmapPlotWidget(QWidget):
         xMin, xMax, xCount = self._resolveAxisGrid(self._xBounds, [], self._gridCols)
         yMin, yMax, yCount = self._resolveAxisGrid(self._yBounds, [], self._gridRows)
         z = np.full((xCount, yCount), np.nan, dtype=np.float64)
-        self._image.setImage(z, autoLevels=False)
+        self._image.setImage(self._displayImageData(z), autoLevels=False)
         xStep = self._gridStep(xMin, xMax, xCount)
         yStep = self._gridStep(yMin, yMax, yCount)
         width = max(xStep, xMax - xMin)
@@ -229,6 +229,13 @@ class HeatmapPlotWidget(QWidget):
         step = self._gridStep(lower, upper, count)
         raw = int(round((float(value) - float(lower)) / step))
         return max(0, min(count - 1, raw))
+
+    def _displayImageData(self, z: np.ndarray) -> np.ndarray:
+        # Embedded heatmaps use the historical orientation expected by users.
+        # Pop-out behavior is intentionally left unchanged.
+        if self._allowPopout:
+            return np.asarray(z.T, dtype=np.float64)
+        return np.asarray(z, dtype=np.float64)
 
     def _estimateAxisStep(self, values: list[float]) -> float:
         if len(values) < 2:
