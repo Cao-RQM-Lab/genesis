@@ -430,7 +430,7 @@ class MainWindow(QMainWindow):
             return
         self.abortController.clearAbort()
         self.statusLabel.setText(
-            "Stop requested. Ramping down swept outputs to initialized setpoints..."
+            "Stop requested. Ramping swept outputs back to safe state..."
         )
         jobDefinition = self.currentJob.rawDefinition
         latestSnapshot = dict(self._latestValues)
@@ -540,10 +540,14 @@ class MainWindow(QMainWindow):
                     )
                 xAxisLabel = xAxisLabel or "x"
                 yAxisLabel = yAxisLabel or "y"
+                xBounds = self._sweepBoundsForVarAxis(xDef, jobDefinition)
+                yBounds = self._sweepBoundsForVarAxis(hyDef, jobDefinition)
                 widget = HeatmapPlotWidget(
                     title=title,
                     xLabel=xAxisLabel,
                     yLabel=yAxisLabel,
+                    xBounds=xBounds,
+                    yBounds=yBounds,
                     parent=self.runPlotsContainer,
                 )
             else:
@@ -674,11 +678,13 @@ class MainWindow(QMainWindow):
             setpointBoundsByInstrumentId,
         ) = self._buildRuntimeFromJob(jobDefinition)
         sweptPairs: set[tuple[str, str]] = set()
+        sweepByPair: dict[tuple[str, str], dict[str, Any]] = {}
         for sweep in sweeps:
             instId = str(sweep.get("instrumentId", ""))
             key = str(sweep.get("key", ""))
             if instId and key:
                 sweptPairs.add((instId, key))
+                sweepByPair[(instId, key)] = sweep
 
         safety = SetpointSafetyController(setpointBoundsByInstrumentId)
         for (instId, key), value in self._latestValues.items():
@@ -694,55 +700,53 @@ class MainWindow(QMainWindow):
             raise RuntimeError("aborted")
 
         try:
-            # Apply all configured non-swept instrument values (bounded).
+            # Initialize all instruments to safe state values.
             for instDef in jobDefinition.get("instruments", []):
                 instrumentId = str(instDef.get("id", ""))
                 instrument = instrumentsById.get(instrumentId)
                 if instrument is None:
                     continue
 
-                for key, value in dict(instDef.get("config", {})).items():
-                    if (instrumentId, str(key)) in sweptPairs:
-                        # Swept keys are set later with optional slew-rate limiting.
-                        continue
-                    safety.apply_bounded_immediate(
-                        instrument_id=instrumentId,
-                        instrument=instrument,
-                        key=str(key),
-                        value=value,
-                    )
+                safeTargets = dict(instDef.get("safeConfig", {}))
+                if not safeTargets:
+                    safeTargets = dict(instDef.get("config", {}))
+                for key, value in safeTargets.items():
+                    keyStr = str(key)
+                    pair = (instrumentId, keyStr)
+                    if (
+                        pair in sweptPairs
+                        and pair in sweepByPair
+                        and isinstance(value, (int, float))
+                        and not isinstance(value, bool)
+                    ):
+                        sweepCfg = sweepByPair[pair]
+                        safety.apply_slew_limited(
+                            instrument_id=instrumentId,
+                            instrument=instrument,
+                            key=keyStr,
+                            target_value=float(value),
+                            max_slew_rate=float(sweepCfg.get("maxSlewRate", 0.0)),
+                            max_slew_step=float(
+                                sweepCfg.get(
+                                    "maxSlewStep", sweepCfg.get("stepSize", 0.0)
+                                )
+                            ),
+                            should_stop=self.abortController.isAbortRequested,
+                        )
+                        latestValueUpdates[(instrumentId, keyStr)] = float(value)
+                    else:
+                        bounded = safety.apply_bounded_immediate(
+                            instrument_id=instrumentId,
+                            instrument=instrument,
+                            key=keyStr,
+                            value=value,
+                        )
+                        if isinstance(bounded, (int, float)) and not isinstance(
+                            bounded, bool
+                        ):
+                            latestValueUpdates[(instrumentId, keyStr)] = float(bounded)
                     if self.abortController.isAbortRequested():
                         _abort_now()
-
-            # Initialize each sweep variable to its first point.
-            for sweep in sweeps:
-                instId = str(sweep.get("instrumentId", ""))
-                key = str(sweep.get("key", ""))
-                if not instId or not key:
-                    continue
-                if instId == "__time__" and key == "time":
-                    continue
-                instrument = instrumentsById.get(instId)
-                if instrument is None:
-                    continue
-                values = self._buildSweepValues(sweep)
-                if len(values) == 0:
-                    continue
-                target = float(values[0])
-                safety.apply_slew_limited(
-                    instrument_id=instId,
-                    instrument=instrument,
-                    key=key,
-                    target_value=target,
-                    max_slew_rate=float(sweep.get("maxSlewRate", 0.0)),
-                    max_slew_step=float(
-                        sweep.get("maxSlewStep", sweep.get("stepSize", 0.0))
-                    ),
-                    should_stop=self.abortController.isAbortRequested,
-                )
-                if self.abortController.isAbortRequested():
-                    _abort_now()
-                latestValueUpdates[(instId, key)] = float(values[0])
         except Exception:
             if self.abortController.isAbortRequested():
                 for instrument in instrumentsById.values():
@@ -847,7 +851,7 @@ class MainWindow(QMainWindow):
             self.statusLabel.setText("Sweep complete. Data acquisition ended.")
             return
         self.statusLabel.setText(
-            "Sweep complete. Ramping down swept outputs to initialized setpoints..."
+            "Sweep complete. Ramping swept outputs back to safe state..."
         )
         jobDefinition = self.currentJob.rawDefinition
         latestSnapshot = dict(self._latestValues)
@@ -957,11 +961,13 @@ class MainWindow(QMainWindow):
     ) -> dict[str, Any]:
         sweeps = [s for s in jobDefinition.get("sweeps", []) if isinstance(s, dict)]
         sweptPairs: set[tuple[str, str]] = set()
+        sweepByPair: dict[tuple[str, str], dict[str, Any]] = {}
         for sweep in sweeps:
             instId = str(sweep.get("instrumentId", ""))
             key = str(sweep.get("key", ""))
             if instId and key:
                 sweptPairs.add((instId, key))
+                sweepByPair[(instId, key)] = sweep
 
         safety = SetpointSafetyController(self._setpointBoundsByInstrumentId)
         for (instId, key), value in latestSnapshot.items():
@@ -977,57 +983,57 @@ class MainWindow(QMainWindow):
                     pass
             raise RuntimeError("aborted")
 
-        # Stop path policy: first slew swept variables to their initialized targets,
-        # then apply remaining initialization config.
-        for sweep in sweeps:
-            instId = str(sweep.get("instrumentId", ""))
-            key = str(sweep.get("key", ""))
-            if not instId or not key:
-                continue
-            if instId == "__time__" and key == "time":
-                continue
-            instrument = self._initializedInstrumentsById.get(instId)
-            if instrument is None:
-                continue
-            values = self._buildSweepValues(sweep)
-            if len(values) == 0:
-                continue
-            target = float(values[0])
-            try:
-                safety.apply_slew_limited(
-                    instrument_id=instId,
-                    instrument=instrument,
-                    key=key,
-                    target_value=target,
-                    max_slew_rate=float(sweep.get("maxSlewRate", 0.0)),
-                    max_slew_step=float(
-                        sweep.get("maxSlewStep", sweep.get("stepSize", 0.0))
-                    ),
-                    should_stop=self.abortController.isAbortRequested,
-                )
-                if self.abortController.isAbortRequested():
-                    _abort_now()
-            except Exception as exc:
-                raise RuntimeError(
-                    f"Stop re-init failed at sweep {instId}:{key}: {exc}"
-                ) from exc
-            latestValueUpdates[(instId, key)] = target
-
-        # Apply non-swept config values immediately (bounded) after sweep ramp-down.
+        # Stop path policy: first slew swept variables to safe targets, then apply
+        # remaining safe-state config.
         for instDef in jobDefinition.get("instruments", []):
             instrumentId = str(instDef.get("id", ""))
             instrument = self._initializedInstrumentsById.get(instrumentId)
             if instrument is None:
                 continue
-            for key, value in dict(instDef.get("config", {})).items():
-                if (instrumentId, str(key)) in sweptPairs:
-                    continue
-                safety.apply_bounded_immediate(
-                    instrument_id=instrumentId,
-                    instrument=instrument,
-                    key=str(key),
-                    value=value,
-                )
+            safeTargets = dict(instDef.get("safeConfig", {}))
+            if not safeTargets:
+                safeTargets = dict(instDef.get("config", {}))
+            for key, value in safeTargets.items():
+                keyStr = str(key)
+                pair = (instrumentId, keyStr)
+                if (
+                    pair in sweptPairs
+                    and pair in sweepByPair
+                    and isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                ):
+                    sweepCfg = sweepByPair[pair]
+                    try:
+                        safety.apply_slew_limited(
+                            instrument_id=instrumentId,
+                            instrument=instrument,
+                            key=keyStr,
+                            target_value=float(value),
+                            max_slew_rate=float(sweepCfg.get("maxSlewRate", 0.0)),
+                            max_slew_step=float(
+                                sweepCfg.get(
+                                    "maxSlewStep",
+                                    sweepCfg.get("stepSize", 0.0),
+                                )
+                            ),
+                            should_stop=self.abortController.isAbortRequested,
+                        )
+                    except Exception as exc:
+                        raise RuntimeError(
+                            f"Stop safe-state slew failed at {instrumentId}:{keyStr}: {exc}"
+                        ) from exc
+                    latestValueUpdates[(instrumentId, keyStr)] = float(value)
+                else:
+                    bounded = safety.apply_bounded_immediate(
+                        instrument_id=instrumentId,
+                        instrument=instrument,
+                        key=keyStr,
+                        value=value,
+                    )
+                    if isinstance(bounded, (int, float)) and not isinstance(
+                        bounded, bool
+                    ):
+                        latestValueUpdates[(instrumentId, keyStr)] = float(bounded)
                 if self.abortController.isAbortRequested():
                     _abort_now()
 
@@ -1042,7 +1048,7 @@ class MainWindow(QMainWindow):
         self.sweepProgressLabel.setText("Sweep Progress: Ready")
         self.sweepProgressBar.setValue(0)
         self.statusLabel.setText(
-            "Ramp-down complete. Data acquisition ended. Initialization settings re-applied and ready."
+            "Safe-state ramp complete. Data acquisition ended and instruments are safe."
         )
         self._refreshControlStates()
 
@@ -1264,6 +1270,45 @@ class MainWindow(QMainWindow):
         }
         return xVar or axisA, yVar or axisB
 
+    def _normalizedSweepMembers(
+        self, jobDefinition: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        sweeps = [
+            s for s in list(jobDefinition.get("sweeps", [])) if isinstance(s, dict)
+        ]
+        if len(sweeps) == 1 and isinstance(sweeps[0].get("outer"), dict):
+            outer = sweeps[0].get("outer", {})
+            inner = sweeps[0].get("inner", {})
+            members: list[dict[str, Any]] = []
+            if isinstance(outer, dict):
+                members.append(dict(outer))
+            if isinstance(inner, dict):
+                members.append(dict(inner))
+            return members
+        return [dict(s) for s in sweeps]
+
+    def _sweepBoundsForVarAxis(
+        self, axisDef: dict[str, Any], jobDefinition: dict[str, Any]
+    ) -> tuple[float, float] | None:
+        if not isinstance(axisDef, dict) or axisDef.get("type") != "var":
+            return None
+        instId = str(axisDef.get("instrumentId", ""))
+        key = str(axisDef.get("key", ""))
+        if not instId or not key:
+            return None
+        for sweep in self._normalizedSweepMembers(jobDefinition):
+            if str(sweep.get("instrumentId", "")) != instId:
+                continue
+            if str(sweep.get("key", "")) != key:
+                continue
+            try:
+                start = float(sweep.get("start", 0.0))
+                stop = float(sweep.get("stop", 0.0))
+            except Exception:
+                return None
+            return (min(start, stop), max(start, stop))
+        return None
+
     def _onSweepProgress(
         self,
         completedSweeps: int,
@@ -1307,11 +1352,12 @@ class MainWindow(QMainWindow):
             baseName = Path(labelName).stem.strip() or "job"
         else:
             baseName = str(jobDefinition.get("jobId", "job")).strip() or "job"
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safeBaseName = "".join(
             c if c.isalnum() or c in "._-" else "_" for c in baseName
         )
         outDir = genesis_runs_dir()
-        defaultPath = outDir / f"{safeBaseName}.csv"
+        defaultPath = outDir / f"{safeBaseName}_{stamp}.csv"
         pathStr, selectedFilter = QFileDialog.getSaveFileName(
             self,
             "Save Raw Data",
