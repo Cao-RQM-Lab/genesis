@@ -69,6 +69,12 @@ class HeatmapPlotWidget(QWidget):
         self._zByKeyPair[(xKey, yKey)] = float(z)
         self._updateImage()
 
+    def clearData(self) -> None:
+        self._xByKey.clear()
+        self._yByKey.clear()
+        self._zByKeyPair.clear()
+        self._image.setImage(np.asarray([[]], dtype=np.float64), autoLevels=True)
+
     def _onColormapChanged(self, _idx: int) -> None:
         name = str(self.colormapCombo.currentData() or "viridis")
         cmap = pg.colormap.get(name)

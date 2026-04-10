@@ -90,6 +90,7 @@ class SetpointSafetyController:
         max_slew_rate: float,
         max_slew_step: float,
         should_stop: Callable[[], bool] | None = None,
+        on_applied: Callable[[float], None] | None = None,
     ) -> bool:
         inst_id = str(instrument_id)
         key_str = str(key)
@@ -99,6 +100,8 @@ class SetpointSafetyController:
         if current is None:
             instrument.applyConfigValue(key_str, target)
             self.seed_last_value(inst_id, key_str, target)
+            if on_applied is not None:
+                on_applied(target)
             return True
 
         current = float(self._clamp_value(inst_id, key_str, float(current)))
@@ -108,6 +111,8 @@ class SetpointSafetyController:
         if abs(delta) <= 0.0 or max_rate <= 0.0:
             instrument.applyConfigValue(key_str, target)
             self.seed_last_value(inst_id, key_str, target)
+            if on_applied is not None:
+                on_applied(target)
             return True
 
         # Explicit policy:
@@ -116,6 +121,8 @@ class SetpointSafetyController:
         if max_step <= 0.0 or abs(delta) <= max_step:
             instrument.applyConfigValue(key_str, target)
             self.seed_last_value(inst_id, key_str, target)
+            if on_applied is not None:
+                on_applied(target)
             return True
         steps = max(1, int(np.ceil(abs(delta) / max_step)))
         sleep_per_step = max_step / max_rate
@@ -127,8 +134,19 @@ class SetpointSafetyController:
             bounded_step = float(self._clamp_value(inst_id, key_str, interpolated))
             instrument.applyConfigValue(key_str, bounded_step)
             self.seed_last_value(inst_id, key_str, bounded_step)
+            if on_applied is not None:
+                on_applied(bounded_step)
             if idx < steps and sleep_per_step > 0.0:
-                self._sleep(sleep_per_step)
+                if should_stop is None:
+                    self._sleep(sleep_per_step)
+                else:
+                    remaining = sleep_per_step
+                    while remaining > 0.0:
+                        if should_stop():
+                            return False
+                        chunk = min(0.05, remaining)
+                        self._sleep(chunk)
+                        remaining -= chunk
         return True
 
     def _clamp_value(

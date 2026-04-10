@@ -229,6 +229,54 @@ class SlewIntegrationTests(unittest.TestCase):
         settle_idx = next(i for i, e in enumerate(events) if e.startswith("settle:"))
         self.assertTrue(all(e.startswith("write:") for e in events[:settle_idx]))
 
+    def test_stop_during_ramp_keeps_intermediate_active_value(self) -> None:
+        transport = DummyTestTransport("DUMMY")
+        instrument = B29xxInstrument(
+            name="smu",
+            transport=transport,
+            jobConfig={"channel": 1, "forceMode": "VOLT"},
+        )
+        sweep = {
+            "instrumentId": "smu",
+            "key": "forceVoltageLevelV",
+            "start": 0.0,
+            "stop": 0.2,
+            "points": 2,
+            "settleTimeSeconds": 0.0,
+            "spacing": "linear",
+            "stepSize": 0.2,
+            "maxSlewRate": 0.1,
+            "maxSlewStep": 0.01,
+        }
+        worker = AcquisitionWorker(
+            instrumentsById={"smu": instrument},
+            measurementKeysByInstrumentId={"smu": []},
+            sweeps=[sweep],
+            intervalSeconds=0.0,
+            initialSweepValuesByInstrumentId={"smu": {"forceVoltageLevelV": 0.0}},
+            boundsByInstrumentId=build_value_bounds_by_instrument(
+                {"smu": B29xxInstrument}
+            ),
+        )
+
+        sleep_calls = {"count": 0}
+
+        def _interrupt_sleep(_seconds: float) -> None:
+            sleep_calls["count"] += 1
+            if sleep_calls["count"] == 1:
+                worker.requestStop()
+
+        worker._safety._sleep = _interrupt_sleep
+        worker._runSingleSweep(sweep)
+
+        snapshot = worker.activeSweepValuesSnapshot()
+        stopped_value = snapshot["smu"]["forceVoltageLevelV"]
+        self.assertGreater(stopped_value, 0.0)
+        self.assertLess(stopped_value, 0.2)
+        writes = _extract_smu_voltage_writes(transport.writtenCommands)
+        self.assertGreaterEqual(len(writes), 1)
+        self.assertAlmostEqual(writes[-1], stopped_value, places=9)
+
 
 if __name__ == "__main__":
     unittest.main()

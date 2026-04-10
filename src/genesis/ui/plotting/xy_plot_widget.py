@@ -74,6 +74,12 @@ class XyPlotWidget(QWidget):
             yData = self._orderedSeries(self._yBySeries[key])
             self._curveBySeries[key].setData(xData, yData)
 
+    def clearData(self) -> None:
+        self._count = 0
+        self._nextIndex = 0
+        for key in self.ySeriesLabels:
+            self._curveBySeries[key].setData([], [])
+
     def _orderedSeries(self, series: np.ndarray) -> np.ndarray:
         if self._count == 0:
             return series[:0]

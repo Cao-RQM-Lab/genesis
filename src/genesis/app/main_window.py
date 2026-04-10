@@ -5,10 +5,10 @@ import csv
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, QThread, Qt, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -50,6 +50,21 @@ from genesis.ui.plotting.heatmap_plot_widget import HeatmapPlotWidget
 from genesis.ui.plotting.xy_plot_widget import XyPlotWidget
 
 
+class _BackgroundTaskWorker(QObject):
+    finished = Signal(object, object)  # result, error
+
+    def __init__(self, work: Callable[[], Any]) -> None:
+        super().__init__()
+        self._work = work
+
+    def run(self) -> None:
+        try:
+            result = self._work()
+            self.finished.emit(result, None)
+        except Exception as exc:  # pragma: no cover - runtime guard
+            self.finished.emit(None, exc)
+
+
 class MainWindow(QMainWindow):
     """
     Minimal main window with a prominent Abort button and job loading hook.
@@ -88,8 +103,13 @@ class MainWindow(QMainWindow):
         self._initializedSweeps: list[dict[str, Any]] = []
         self._initializedJobId: str | None = None
         self._setpointBoundsByInstrumentId: dict[str, dict[str, ValueBounds]] = {}
+        self._taskThread: QThread | None = None
+        self._taskWorker: _BackgroundTaskWorker | None = None
+        self._taskLabel: str = ""
+        self._taskOnSuccess: Callable[[Any], None] | None = None
 
         self._setupUi()
+        self._refreshControlStates()
 
     def _setupUi(self) -> None:
         self.setWindowTitle("Genesis")
@@ -142,9 +162,6 @@ class MainWindow(QMainWindow):
         self.startRunButton = QPushButton("Start Sweep", runTab)
         self.stopRunButton = QPushButton("Stop", runTab)
         self.abortButton = QPushButton("Abort", runTab)
-        self.abortButton.setStyleSheet(
-            "font-weight: 700; color: #ffffff; background-color: #a13333; border-color: #bf4a4a;"
-        )
 
         buttonRow.addWidget(self.loadJobButton)
         buttonRow.addWidget(self.initializeButton)
@@ -182,7 +199,156 @@ class MainWindow(QMainWindow):
         self.stopRunButton.clicked.connect(self._onStopClicked)
         self.abortButton.clicked.connect(self._onAbortClicked)
 
+    def _isTaskRunning(self) -> bool:
+        return self._taskThread is not None
+
+    def _refreshControlStates(self) -> None:
+        hasJob = self.currentJob is not None
+        currentJobId = (
+            str(self.currentJob.rawDefinition.get("jobId", ""))
+            if self.currentJob
+            else ""
+        )
+        abortLatched = self.abortController.isAbortRequested()
+        isInitialized = (
+            hasJob
+            and bool(self._initializedInstrumentsById)
+            and self._initializedJobId == currentJobId
+            and not abortLatched
+        )
+        taskRunning = self._isTaskRunning()
+        acquisitionRunning = self._acqThread is not None
+
+        loadEnabled = not taskRunning and not acquisitionRunning
+        initializeEnabled = hasJob and not taskRunning and not acquisitionRunning
+        startEnabled = isInitialized and not taskRunning and not acquisitionRunning
+        stopEnabled = (acquisitionRunning or isInitialized) and not taskRunning
+        abortEnabled = True
+        if abortLatched:
+            # After abort, force explicit re-initialize before any new sweep/run.
+            startEnabled = False
+            stopEnabled = False
+            abortEnabled = False
+
+        self.loadJobButton.setEnabled(loadEnabled)
+        self.initializeButton.setEnabled(initializeEnabled)
+        self.startRunButton.setEnabled(startEnabled)
+        self.stopRunButton.setEnabled(stopEnabled)
+        self.abortButton.setEnabled(abortEnabled)
+        self._refreshButtonVisualStates(taskRunning, acquisitionRunning)
+
+    def _setButtonActive(self, button: QPushButton, active: bool) -> None:
+        button.setProperty("active", active)
+        style = button.style()
+        style.unpolish(button)
+        style.polish(button)
+        button.update()
+
+    def _refreshButtonVisualStates(
+        self,
+        taskRunning: bool,
+        acquisitionRunning: bool,
+    ) -> None:
+        actionStyle = (
+            "QPushButton { font-weight: 600; }"
+            "QPushButton[active='true'] {"
+            "  color: #ffffff;"
+            "  background-color: #2f6fb2;"
+            "  border: 1px solid #3f83cc;"
+            "}"
+        )
+        self.loadJobButton.setStyleSheet(actionStyle)
+        self.initializeButton.setStyleSheet(actionStyle)
+        self.startRunButton.setStyleSheet(actionStyle)
+        self.stopRunButton.setStyleSheet(actionStyle)
+
+        abortStyle = (
+            "QPushButton {"
+            "  font-weight: 700;"
+            "  color: #ffffff;"
+            "  background-color: #a13333;"
+            "  border: 1px solid #bf4a4a;"
+            "}"
+            "QPushButton[active='true'] {"
+            "  background-color: #c13c3c;"
+            "  border: 1px solid #d65757;"
+            "}"
+        )
+        self.abortButton.setStyleSheet(abortStyle)
+
+        activeLoad = False
+        activeInitialize = False
+        activeStart = False
+        activeStop = False
+
+        if acquisitionRunning:
+            activeStart = True
+        elif taskRunning:
+            task = self._taskLabel.strip().lower()
+            if task.startswith("initialize"):
+                activeInitialize = True
+            elif task.startswith("stop re-initialize"):
+                activeStop = True
+
+        self._setButtonActive(self.loadJobButton, activeLoad)
+        self._setButtonActive(self.initializeButton, activeInitialize)
+        self._setButtonActive(self.startRunButton, activeStart)
+        self._setButtonActive(self.stopRunButton, activeStop)
+        self._setButtonActive(self.abortButton, self.abortController.isAbortRequested())
+
+    def _startBackgroundTask(
+        self,
+        label: str,
+        work: Callable[[], Any],
+        on_success: Callable[[Any], None],
+    ) -> None:
+        if self._taskThread is not None:
+            self.statusLabel.setText("Busy with background operation.")
+            return
+        self._taskLabel = str(label)
+        thread = QThread(self)
+        worker = _BackgroundTaskWorker(work)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        self._taskOnSuccess = on_success
+        worker.finished.connect(self._onBackgroundTaskFinished)
+        self._taskThread = thread
+        self._taskWorker = worker
+        self._refreshControlStates()
+        thread.start()
+
+    def _onBackgroundTaskFinished(
+        self,
+        result: Any,
+        error: Any,
+    ) -> None:
+        thread = self._taskThread
+        worker = self._taskWorker
+        on_success = self._taskOnSuccess
+        self._taskThread = None
+        self._taskWorker = None
+        self._taskOnSuccess = None
+        self._refreshControlStates()
+        if thread is not None:
+            thread.quit()
+            thread.wait(2000)
+            thread.deleteLater()
+        if worker is not None:
+            worker.deleteLater()
+
+        if error is not None:
+            if self.abortController.isAbortRequested():
+                self.statusLabel.setText("Abort complete. Safe state applied.")
+                return
+            self.statusLabel.setText(f"{self._taskLabel} failed: {error}")
+            return
+        if on_success is not None:
+            on_success(result)
+
     def _onLoadJobClicked(self) -> None:
+        if self._isTaskRunning():
+            self.statusLabel.setText("Background operation in progress.")
+            return
         pathStr = QFileDialog.getOpenFileName(
             self,
             "Open Job JSON",
@@ -197,13 +363,27 @@ class MainWindow(QMainWindow):
         self.abortController.requestAbort()
         self._stopAcquisition()
         self._applySafeStateToInitializedInstruments()
+        # Force user through initialize path after an abort.
+        self._initializedJobId = None
         self._checkpointCurrentSweepFile()
-        self.statusLabel.setText("Abort complete. Safe state applied.")
+        self.statusLabel.setText(
+            "Abort complete. Safe state applied. Re-initialize required."
+        )
+        self._refreshControlStates()
 
     def _onStartClicked(self) -> None:
+        if self._isTaskRunning():
+            self.statusLabel.setText("Background operation in progress.")
+            return
+        if self.abortController.isAbortRequested():
+            self.statusLabel.setText(
+                "Initialize instruments after abort before starting."
+            )
+            return
         if self.currentJob is None:
             self.statusLabel.setText("Load a Job First.")
             return
+        self.abortController.clearAbort()
         currentJobId = str(self.currentJob.rawDefinition.get("jobId", ""))
         if self._initializedJobId != currentJobId:
             self.statusLabel.setText("Initialize Instruments First.")
@@ -211,20 +391,54 @@ class MainWindow(QMainWindow):
         self._startSweepRun()
 
     def _onInitializeClicked(self) -> None:
+        if self._isTaskRunning():
+            self.statusLabel.setText("Background operation in progress.")
+            return
         if self.currentJob is None:
             self.statusLabel.setText("Load a Job First.")
             return
-        self._initializeInstrumentsFromJob(self.currentJob.rawDefinition)
+        self.abortController.clearAbort()
+        if not self._stopAcquisition():
+            self.statusLabel.setText("Waiting for active sweep to stop...")
+            return
+        self._closeInitializedInstruments()
+        self._initializedJobId = None
+        self.sweepProgressLabel.setText("Sweep Progress: Initializing")
+        self.sweepProgressBar.setValue(0)
+        jobDefinition = self.currentJob.rawDefinition
+        self.statusLabel.setText("Initializing instruments...")
+        self._startBackgroundTask(
+            "Initialize",
+            lambda: self._prepareInitializationState(jobDefinition),
+            self._applyInitializationState,
+        )
 
     def _onStopClicked(self) -> None:
-        self._stopAcquisition()
+        if self._isTaskRunning():
+            self.statusLabel.setText("Background operation in progress.")
+            return
+        if not self._stopAcquisition():
+            self.statusLabel.setText(
+                "Stop requested. Waiting for active step to finish before ramp-down..."
+            )
+            return
         if self.currentJob is None:
-            self.statusLabel.setText("Sweep stopped.")
+            self.statusLabel.setText("Run stopped.")
             return
         if not self._initializedInstrumentsById:
-            self.statusLabel.setText("Sweep stopped.")
+            self.statusLabel.setText("Run stopped.")
             return
-        self._reinitializeActiveInstrumentsFromCurrentJob()
+        self.abortController.clearAbort()
+        self.statusLabel.setText(
+            "Stop requested. Ramping down swept outputs to initialized setpoints..."
+        )
+        jobDefinition = self.currentJob.rawDefinition
+        latestSnapshot = dict(self._latestValues)
+        self._startBackgroundTask(
+            "Stop re-initialize",
+            lambda: self._prepareReinitializeState(jobDefinition, latestSnapshot),
+            self._applyReinitializeState,
+        )
 
     def _clearPlots(self) -> None:
         self._plotConfigs.clear()
@@ -251,7 +465,9 @@ class MainWindow(QMainWindow):
             self.statusLabel.setText(f"Failed to load job: {path}")
             return
 
-        self._stopAcquisition()
+        if not self._stopAcquisition():
+            self.statusLabel.setText("Waiting for active sweep to stop...")
+            return
         self._closeInitializedInstruments()
         self._initializedJobId = None
         self.currentJob = JobModel.fromJson(payload)
@@ -263,6 +479,7 @@ class MainWindow(QMainWindow):
         self._setupPlotsFromJob(payload)
         self.sweepProgressLabel.setText("Sweep Progress: Idle")
         self.sweepProgressBar.setValue(0)
+        self._refreshControlStates()
 
     def _setupPlotsFromJob(self, jobDefinition: dict[str, Any]) -> None:
         self._plotConfigs = list(jobDefinition.get("plots", []))
@@ -447,23 +664,15 @@ class MainWindow(QMainWindow):
             build_value_bounds_by_instrument(instrumentTypesById),
         )
 
-    def _initializeInstrumentsFromJob(self, jobDefinition: dict[str, Any]) -> None:
-        self._stopAcquisition()
-        self._closeInitializedInstruments()
-        self._initializedJobId = None
-        self.sweepProgressLabel.setText("Sweep Progress: Initializing")
-        self.sweepProgressBar.setValue(0)
-
-        try:
-            (
-                instrumentsById,
-                measurementKeysByInstrumentId,
-                sweeps,
-                setpointBoundsByInstrumentId,
-            ) = self._buildRuntimeFromJob(jobDefinition)
-        except Exception as exc:
-            self.statusLabel.setText(f"Initialize failed: {exc}")
-            return
+    def _prepareInitializationState(
+        self, jobDefinition: dict[str, Any]
+    ) -> dict[str, Any]:
+        (
+            instrumentsById,
+            measurementKeysByInstrumentId,
+            sweeps,
+            setpointBoundsByInstrumentId,
+        ) = self._buildRuntimeFromJob(jobDefinition)
         sweptPairs: set[tuple[str, str]] = set()
         for sweep in sweeps:
             instId = str(sweep.get("instrumentId", ""))
@@ -474,48 +683,52 @@ class MainWindow(QMainWindow):
         safety = SetpointSafetyController(setpointBoundsByInstrumentId)
         for (instId, key), value in self._latestValues.items():
             safety.seed_last_value(str(instId), str(key), float(value))
+        latestValueUpdates: dict[tuple[str, str], float] = {}
 
-        # Apply all configured non-swept instrument values (bounded).
-        for instDef in jobDefinition.get("instruments", []):
-            instrumentId = str(instDef.get("id", ""))
-            instrument = instrumentsById.get(instrumentId)
-            if instrument is None:
-                continue
-
-            for key, value in dict(instDef.get("config", {})).items():
-                if (instrumentId, str(key)) in sweptPairs:
-                    # Swept keys are set later with optional slew-rate limiting.
-                    continue
+        def _abort_now() -> None:
+            for instrument in instrumentsById.values():
                 try:
+                    instrument.applySafeState()
+                except Exception:
+                    pass
+            raise RuntimeError("aborted")
+
+        try:
+            # Apply all configured non-swept instrument values (bounded).
+            for instDef in jobDefinition.get("instruments", []):
+                instrumentId = str(instDef.get("id", ""))
+                instrument = instrumentsById.get(instrumentId)
+                if instrument is None:
+                    continue
+
+                for key, value in dict(instDef.get("config", {})).items():
+                    if (instrumentId, str(key)) in sweptPairs:
+                        # Swept keys are set later with optional slew-rate limiting.
+                        continue
                     safety.apply_bounded_immediate(
                         instrument_id=instrumentId,
                         instrument=instrument,
                         key=str(key),
                         value=value,
                     )
-                except Exception as exc:
-                    self.statusLabel.setText(
-                        f"Initialize failed at {instrumentId}:{key}: {exc}"
-                    )
-                    self._closeInitializedInstruments()
-                    return
+                    if self.abortController.isAbortRequested():
+                        _abort_now()
 
-        # Initialize each sweep variable to its first point.
-        for sweep in sweeps:
-            instId = str(sweep.get("instrumentId", ""))
-            key = str(sweep.get("key", ""))
-            if not instId or not key:
-                continue
-            if instId == "__time__" and key == "time":
-                continue
-            instrument = instrumentsById.get(instId)
-            if instrument is None:
-                continue
-            values = self._buildSweepValues(sweep)
-            if len(values) == 0:
-                continue
-            target = float(values[0])
-            try:
+            # Initialize each sweep variable to its first point.
+            for sweep in sweeps:
+                instId = str(sweep.get("instrumentId", ""))
+                key = str(sweep.get("key", ""))
+                if not instId or not key:
+                    continue
+                if instId == "__time__" and key == "time":
+                    continue
+                instrument = instrumentsById.get(instId)
+                if instrument is None:
+                    continue
+                values = self._buildSweepValues(sweep)
+                if len(values) == 0:
+                    continue
+                target = float(values[0])
                 safety.apply_slew_limited(
                     instrument_id=instId,
                     instrument=instrument,
@@ -525,17 +738,25 @@ class MainWindow(QMainWindow):
                     max_slew_step=float(
                         sweep.get("maxSlewStep", sweep.get("stepSize", 0.0))
                     ),
+                    should_stop=self.abortController.isAbortRequested,
                 )
-            except Exception as exc:
-                self.statusLabel.setText(
-                    f"Initialize failed at sweep {instId}:{key}: {exc}"
-                )
-                self._closeInitializedInstruments()
-                return
-            self._latestValues[(instId, key)] = float(values[0])
+                if self.abortController.isAbortRequested():
+                    _abort_now()
+                latestValueUpdates[(instId, key)] = float(values[0])
+        except Exception:
+            if self.abortController.isAbortRequested():
+                for instrument in instrumentsById.values():
+                    try:
+                        instrument.applySafeState()
+                    except Exception:
+                        pass
+            for instrument in instrumentsById.values():
+                try:
+                    instrument.transport.close()
+                except Exception:
+                    pass
+            raise
 
-        self._initializedInstrumentsById = instrumentsById
-        self._initializedMeasurementKeysByInstrumentId = measurementKeysByInstrumentId
         rawLogKeysByInstrumentId: dict[str, set[str]] = {}
         for instId, keys in measurementKeysByInstrumentId.items():
             rawLogKeysByInstrumentId[instId] = {str(k) for k in keys if str(k)}
@@ -545,16 +766,38 @@ class MainWindow(QMainWindow):
             if not instId or not key:
                 continue
             rawLogKeysByInstrumentId.setdefault(instId, set()).add(key)
-        self._rawLogKeysByInstrumentId = rawLogKeysByInstrumentId
-        self._initializedSweeps = sweeps
-        self._setpointBoundsByInstrumentId = setpointBoundsByInstrumentId
-        self._initializedJobId = str(jobDefinition.get("jobId", ""))
+
+        return {
+            "instrumentsById": instrumentsById,
+            "measurementKeysByInstrumentId": measurementKeysByInstrumentId,
+            "sweeps": sweeps,
+            "setpointBoundsByInstrumentId": setpointBoundsByInstrumentId,
+            "rawLogKeysByInstrumentId": rawLogKeysByInstrumentId,
+            "initializedJobId": str(jobDefinition.get("jobId", "")),
+            "latestValueUpdates": latestValueUpdates,
+        }
+
+    def _applyInitializationState(self, state: dict[str, Any]) -> None:
+        self._initializedInstrumentsById = dict(state.get("instrumentsById", {}))
+        self._initializedMeasurementKeysByInstrumentId = dict(
+            state.get("measurementKeysByInstrumentId", {})
+        )
+        self._initializedSweeps = list(state.get("sweeps", []))
+        self._setpointBoundsByInstrumentId = dict(
+            state.get("setpointBoundsByInstrumentId", {})
+        )
+        self._rawLogKeysByInstrumentId = dict(state.get("rawLogKeysByInstrumentId", {}))
+        self._initializedJobId = str(state.get("initializedJobId", ""))
+        self._latestValues.update(dict(state.get("latestValueUpdates", {})))
         self.statusLabel.setText("Initialization Complete. Ready to Start Sweep.")
         self.sweepProgressLabel.setText("Sweep Progress: Ready")
         self.sweepProgressBar.setValue(0)
+        self._refreshControlStates()
 
     def _startSweepRun(self) -> None:
-        self._stopAcquisition()
+        if not self._stopAcquisition():
+            self.statusLabel.setText("Waiting for prior sweep thread to stop...")
+            return
         self._runStartUnixTimestamp = datetime.now().timestamp()
         if not self._initializedInstrumentsById:
             self.statusLabel.setText("Initialize Instruments First.")
@@ -566,6 +809,7 @@ class MainWindow(QMainWindow):
             return
         targetPath, exportFormat = exportTarget
         self._prepareDataExport(targetPath, exportFormat)
+        self._clearRunPlotData()
         if not self._initializedSweeps:
             self._startSweepDataFile("continuous")
 
@@ -581,21 +825,71 @@ class MainWindow(QMainWindow):
         worker.sampleEmitted.connect(self._onSampleEmitted)
         worker.statusMessage.connect(self.statusLabel.setText)
         worker.sweepProgress.connect(self._onSweepProgress)
+        worker.rampProgress.connect(self._onRampProgress)
+        worker.sweepCompleted.connect(self._onSweepCompletedNaturally)
 
         self._acqThread = thread
         self._acqWorker = worker
         thread.start()
+        self._refreshControlStates()
 
-    def _stopAcquisition(self) -> None:
-        if self._acqWorker is not None:
-            self._acqWorker.requestStop()
-        if self._acqThread is not None:
-            self._acqThread.quit()
-            self._acqThread.wait(2000)
+    def _onSweepCompletedNaturally(self) -> None:
+        if self.abortController.isAbortRequested():
+            return
+        if self._isTaskRunning():
+            return
+        if not self._stopAcquisition():
+            self.statusLabel.setText(
+                "Sweep complete. Waiting for acquisition thread to exit..."
+            )
+            return
+        if self.currentJob is None or not self._initializedInstrumentsById:
+            self.statusLabel.setText("Sweep complete. Data acquisition ended.")
+            return
+        self.statusLabel.setText(
+            "Sweep complete. Ramping down swept outputs to initialized setpoints..."
+        )
+        jobDefinition = self.currentJob.rawDefinition
+        latestSnapshot = dict(self._latestValues)
+        self._startBackgroundTask(
+            "Stop re-initialize",
+            lambda: self._prepareReinitializeState(jobDefinition, latestSnapshot),
+            self._applyReinitializeState,
+        )
+
+    def _clearRunPlotData(self) -> None:
+        for widget in self._plotWidgetsByIndex.values():
+            if isinstance(widget, XyPlotWidget):
+                widget.clearData()
+            elif isinstance(widget, HeatmapPlotWidget):
+                widget.clearData()
+
+    def _stopAcquisition(self) -> bool:
+        worker = self._acqWorker
+        if worker is not None:
+            worker.requestStop()
+        thread = self._acqThread
+        if thread is not None:
+            thread.quit()
+            if not thread.wait(5000):
+                # Keep references alive to avoid destroying a running thread.
+                self._refreshControlStates()
+                return False
+            thread.deleteLater()
+        if worker is not None:
+            try:
+                activeSweepValues = worker.activeSweepValuesSnapshot()
+                for instrumentId, values in activeSweepValues.items():
+                    for key, value in values.items():
+                        self._latestValues[(str(instrumentId), str(key))] = float(value)
+            except Exception:
+                pass
         self._acqWorker = None
         self._acqThread = None
         self._closeDataLogFile()
         self._runStartUnixTimestamp = None
+        self._refreshControlStates()
+        return True
 
     def _closeInitializedInstruments(self) -> None:
         for instrument in self._initializedInstrumentsById.values():
@@ -608,11 +902,33 @@ class MainWindow(QMainWindow):
         self._rawLogKeysByInstrumentId = {}
         self._initializedSweeps = []
         self._setpointBoundsByInstrumentId = {}
+        self._refreshControlStates()
 
     def _applySafeStateToInitializedInstruments(self) -> None:
         for instrumentId, instrument in self._initializedInstrumentsById.items():
             try:
                 instrument.applySafeState()
+                # Abort should advance our "last commanded" cache to the safe-state
+                # target so later initialize/stop logic does not ramp from stale values.
+                try:
+                    keysToDrop = [
+                        ref
+                        for ref in self._latestValues.keys()
+                        if ref[0] == str(instrumentId)
+                    ]
+                    for ref in keysToDrop:
+                        self._latestValues.pop(ref, None)
+                    config = getattr(instrument, "jobConfig", None)
+                    if isinstance(config, dict):
+                        for key, value in config.items():
+                            if isinstance(value, bool):
+                                continue
+                            if isinstance(value, (int, float)):
+                                self._latestValues[(str(instrumentId), str(key))] = (
+                                    float(value)
+                                )
+                except Exception:
+                    pass
             except Exception as exc:
                 self.statusLabel.setText(
                     f"Abort warning: safe state failed for {instrumentId}: {exc}"
@@ -631,11 +947,11 @@ class MainWindow(QMainWindow):
             valuesByInstrumentId.setdefault(instId, {})[key] = float(val)
         return valuesByInstrumentId
 
-    def _reinitializeActiveInstrumentsFromCurrentJob(self) -> None:
-        if self.currentJob is None:
-            self.statusLabel.setText("Sweep stopped.")
-            return
-        jobDefinition = self.currentJob.rawDefinition
+    def _prepareReinitializeState(
+        self,
+        jobDefinition: dict[str, Any],
+        latestSnapshot: dict[tuple[str, str], float],
+    ) -> dict[str, Any]:
         sweeps = [s for s in jobDefinition.get("sweeps", []) if isinstance(s, dict)]
         sweptPairs: set[tuple[str, str]] = set()
         for sweep in sweeps:
@@ -645,32 +961,21 @@ class MainWindow(QMainWindow):
                 sweptPairs.add((instId, key))
 
         safety = SetpointSafetyController(self._setpointBoundsByInstrumentId)
-        for (instId, key), value in self._latestValues.items():
+        for (instId, key), value in latestSnapshot.items():
             safety.seed_last_value(str(instId), str(key), float(value))
+        latestValueUpdates: dict[tuple[str, str], float] = {}
+        activeInstrumentsById = self._initializedInstrumentsById
 
-        # Apply non-swept config values immediately (bounded).
-        for instDef in jobDefinition.get("instruments", []):
-            instrumentId = str(instDef.get("id", ""))
-            instrument = self._initializedInstrumentsById.get(instrumentId)
-            if instrument is None:
-                continue
-            for key, value in dict(instDef.get("config", {})).items():
-                if (instrumentId, str(key)) in sweptPairs:
-                    continue
+        def _abort_now() -> None:
+            for instrument in activeInstrumentsById.values():
                 try:
-                    safety.apply_bounded_immediate(
-                        instrument_id=instrumentId,
-                        instrument=instrument,
-                        key=str(key),
-                        value=value,
-                    )
-                except Exception as exc:
-                    self.statusLabel.setText(
-                        f"Stop re-init failed at {instrumentId}:{key}: {exc}"
-                    )
-                    return
+                    instrument.applySafeState()
+                except Exception:
+                    pass
+            raise RuntimeError("aborted")
 
-        # Return swept variables to initialized first point using slew limits.
+        # Stop path policy: first slew swept variables to their initialized targets,
+        # then apply remaining initialization config.
         for sweep in sweeps:
             instId = str(sweep.get("instrumentId", ""))
             key = str(sweep.get("key", ""))
@@ -695,22 +1000,73 @@ class MainWindow(QMainWindow):
                     max_slew_step=float(
                         sweep.get("maxSlewStep", sweep.get("stepSize", 0.0))
                     ),
+                    should_stop=self.abortController.isAbortRequested,
                 )
+                if self.abortController.isAbortRequested():
+                    _abort_now()
             except Exception as exc:
-                self.statusLabel.setText(
+                raise RuntimeError(
                     f"Stop re-init failed at sweep {instId}:{key}: {exc}"
-                )
-                return
-            self._latestValues[(instId, key)] = target
+                ) from exc
+            latestValueUpdates[(instId, key)] = target
 
-        self._initializedJobId = str(jobDefinition.get("jobId", ""))
+        # Apply non-swept config values immediately (bounded) after sweep ramp-down.
+        for instDef in jobDefinition.get("instruments", []):
+            instrumentId = str(instDef.get("id", ""))
+            instrument = self._initializedInstrumentsById.get(instrumentId)
+            if instrument is None:
+                continue
+            for key, value in dict(instDef.get("config", {})).items():
+                if (instrumentId, str(key)) in sweptPairs:
+                    continue
+                safety.apply_bounded_immediate(
+                    instrument_id=instrumentId,
+                    instrument=instrument,
+                    key=str(key),
+                    value=value,
+                )
+                if self.abortController.isAbortRequested():
+                    _abort_now()
+
+        return {
+            "initializedJobId": str(jobDefinition.get("jobId", "")),
+            "latestValueUpdates": latestValueUpdates,
+        }
+
+    def _applyReinitializeState(self, state: dict[str, Any]) -> None:
+        self._initializedJobId = str(state.get("initializedJobId", ""))
+        self._latestValues.update(dict(state.get("latestValueUpdates", {})))
         self.sweepProgressLabel.setText("Sweep Progress: Ready")
         self.sweepProgressBar.setValue(0)
-        self.statusLabel.setText("Sweep stopped. Returned to initialized state.")
+        self.statusLabel.setText(
+            "Ramp-down complete. Data acquisition ended. Initialization settings re-applied and ready."
+        )
+        self._refreshControlStates()
+
+    def _onRampProgress(self, fraction: float, sweepLabel: str) -> None:
+        frac = min(max(float(fraction), 0.0), 1.0)
+        self.sweepProgressBar.setValue(int(frac * 1000))
+        pct = int(round(frac * 100.0))
+        self.sweepProgressLabel.setText(
+            f"Sweep Progress: Ramping {pct}% ({sweepLabel})"
+        )
 
     def closeEvent(self, event: QCloseEvent) -> None:
         # Best-effort durability on app close.
-        self._stopAcquisition()
+        self.abortController.requestAbort()
+        if not self._stopAcquisition():
+            self.statusLabel.setText("Waiting for active sweep to stop before closing.")
+            event.ignore()
+            return
+        taskThread = self._taskThread
+        if taskThread is not None:
+            taskThread.quit()
+            if not taskThread.wait(5000):
+                self.statusLabel.setText(
+                    "Waiting for background task to stop before closing."
+                )
+                event.ignore()
+                return
         self._closeInitializedInstruments()
         super().closeEvent(event)
 

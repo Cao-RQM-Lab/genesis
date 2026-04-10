@@ -18,6 +18,8 @@ class AcquisitionWorker(QObject):
     sampleEmitted = Signal(float, dict)  # timestamp, valuesByInstrumentId
     statusMessage = Signal(str)
     sweepProgress = Signal(int, int, int, int, str)
+    rampProgress = Signal(float, str)  # 0..1, label
+    sweepCompleted = Signal()
 
     def __init__(
         self,
@@ -45,43 +47,51 @@ class AcquisitionWorker(QObject):
     def requestStop(self) -> None:
         self._shouldStop = True
 
+    def activeSweepValuesSnapshot(self) -> dict[str, dict[str, float]]:
+        return {
+            str(instId): {str(key): float(value) for key, value in values.items()}
+            for instId, values in self._activeSweepValuesByInstrumentId.items()
+        }
+
     def run(self) -> None:
-        self.statusMessage.emit("Acquisition started.")
+        self.statusMessage.emit("Data acquisition started.")
+        completedSweep = False
         if self.sweeps:
-            self._runConfiguredSweep()
+            completedSweep = self._runConfiguredSweep()
         else:
             while not self._shouldStop:
                 self._sampleAllInstruments(time.time())
                 time.sleep(self.intervalSeconds)
-        self.statusMessage.emit("Acquisition stopped.")
+        if completedSweep and not self._shouldStop:
+            self.sweepCompleted.emit()
+        self.statusMessage.emit("Data acquisition loop ended.")
 
-    def _runConfiguredSweep(self) -> None:
+    def _runConfiguredSweep(self) -> bool:
         configured = [s for s in self.sweeps if isinstance(s, dict)]
         if len(configured) == 1:
-            self._runSingleSweep(configured[0])
-            return
+            return self._runSingleSweep(configured[0])
         if len(configured) == 2:
-            self._runNestedSweep2d(configured[0], configured[1])
-            return
+            return self._runNestedSweep2d(configured[0], configured[1])
         self.statusMessage.emit(
             f"Skipping sweep: nested depth {len(configured)} is unsupported."
         )
+        return False
 
     def _runSingleSweep(
         self,
         sweep: dict[str, Any],
-    ) -> None:
+    ) -> bool:
         instrumentId = str(sweep.get("instrumentId", ""))
         key = str(sweep.get("key", ""))
         if not instrumentId or not key:
-            return
+            return False
         isTimeSweep = instrumentId == "__time__" and key == "time"
         instrument = self.instrumentsById.get(instrumentId)
         if not isTimeSweep and instrument is None:
             self.statusMessage.emit(
                 f"Skipping sweep {instrumentId}:{key} (instrument not found)."
             )
-            return
+            return False
 
         values = self._buildSweepValues(sweep)
         settle = float(sweep.get("settleTimeSeconds", 0.0))
@@ -92,6 +102,7 @@ class AcquisitionWorker(QObject):
         self.sweepProgress.emit(0, 1, 0, len(values), label)
 
         sweepStart = time.time()
+        pointIndex = 0
         for pointIndex, point in enumerate(values, start=1):
             if self._shouldStop:
                 break
@@ -100,16 +111,44 @@ class AcquisitionWorker(QObject):
                 self._sleepUntilOrStop(target)
             else:
                 try:
+                    currentValue = float(
+                        self._activeSweepValuesByInstrumentId.get(instrumentId, {}).get(
+                            key, point
+                        )
+                    )
+                    targetValue = float(point)
+                    rampSteps = self._estimateSlewStepCount(
+                        current=currentValue,
+                        target=targetValue,
+                        maxSlewRate=float(sweep.get("maxSlewRate", 0.0)),
+                        maxSlewStep=float(
+                            sweep.get("maxSlewStep", sweep.get("stepSize", 0.0))
+                        ),
+                    )
+                    rampApplied = 0
+
+                    def _on_applied(value: float) -> None:
+                        nonlocal rampApplied
+                        rampApplied += 1
+                        self._activeSweepValuesByInstrumentId.setdefault(
+                            instrumentId, {}
+                        )[key] = float(value)
+                        frac = (
+                            (pointIndex - 1) + (rampApplied / max(1, rampSteps))
+                        ) / max(1, len(values))
+                        self.rampProgress.emit(float(min(max(frac, 0.0), 1.0)), label)
+
                     slewCompleted = self._safety.apply_slew_limited(
                         instrument_id=instrumentId,
                         instrument=instrument,
                         key=key,
-                        target_value=float(point),
+                        target_value=targetValue,
                         max_slew_rate=float(sweep.get("maxSlewRate", 0.0)),
                         max_slew_step=float(
                             sweep.get("maxSlewStep", sweep.get("stepSize", 0.0))
                         ),
                         should_stop=lambda: self._shouldStop,
+                        on_applied=_on_applied,
                     )
                     if not slewCompleted:
                         break
@@ -129,18 +168,21 @@ class AcquisitionWorker(QObject):
                 break
             self._sampleAllInstruments(stepTimestamp)
             self.sweepProgress.emit(1, 1, pointIndex, len(values), label)
+        return (
+            (not self._shouldStop) and (len(values) > 0) and (pointIndex == len(values))
+        )
 
     def _runNestedSweep2d(
         self,
         outerSweep: dict[str, Any],
         innerSweep: dict[str, Any],
-    ) -> None:
+    ) -> bool:
         outerInstId = str(outerSweep.get("instrumentId", ""))
         outerKey = str(outerSweep.get("key", ""))
         innerInstId = str(innerSweep.get("instrumentId", ""))
         innerKey = str(innerSweep.get("key", ""))
         if not outerInstId or not outerKey or not innerInstId or not innerKey:
-            return
+            return False
 
         outerIsTime = outerInstId == "__time__" and outerKey == "time"
         innerIsTime = innerInstId == "__time__" and innerKey == "time"
@@ -150,12 +192,12 @@ class AcquisitionWorker(QObject):
             self.statusMessage.emit(
                 f"Skipping 2D sweep {outerInstId}:{outerKey} (instrument not found)."
             )
-            return
+            return False
         if not innerIsTime and innerInstrument is None:
             self.statusMessage.emit(
                 f"Skipping 2D sweep {innerInstId}:{innerKey} (instrument not found)."
             )
-            return
+            return False
 
         outerValues = self._buildSweepValues(outerSweep)
         innerValues = self._buildSweepValues(innerSweep)
@@ -178,11 +220,40 @@ class AcquisitionWorker(QObject):
                 self._sleepUntilOrStop(outerTarget)
             else:
                 try:
+                    currentValue = float(
+                        self._activeSweepValuesByInstrumentId.get(outerInstId, {}).get(
+                            outerKey, outerValue
+                        )
+                    )
+                    targetValue = float(outerValue)
+                    outerRampSteps = self._estimateSlewStepCount(
+                        current=currentValue,
+                        target=targetValue,
+                        maxSlewRate=float(outerSweep.get("maxSlewRate", 0.0)),
+                        maxSlewStep=float(
+                            outerSweep.get(
+                                "maxSlewStep", outerSweep.get("stepSize", 0.0)
+                            )
+                        ),
+                    )
+                    outerRampApplied = 0
+
+                    def _on_outer_applied(value: float) -> None:
+                        nonlocal outerRampApplied
+                        outerRampApplied += 1
+                        self._activeSweepValuesByInstrumentId.setdefault(
+                            outerInstId, {}
+                        )[outerKey] = float(value)
+                        frac = (
+                            pointIndex + (outerRampApplied / max(1, outerRampSteps))
+                        ) / max(1, totalPoints)
+                        self.rampProgress.emit(float(min(max(frac, 0.0), 1.0)), label)
+
                     slewCompleted = self._safety.apply_slew_limited(
                         instrument_id=outerInstId,
                         instrument=outerInstrument,
                         key=outerKey,
-                        target_value=float(outerValue),
+                        target_value=targetValue,
                         max_slew_rate=float(outerSweep.get("maxSlewRate", 0.0)),
                         max_slew_step=float(
                             outerSweep.get(
@@ -190,6 +261,7 @@ class AcquisitionWorker(QObject):
                             )
                         ),
                         should_stop=lambda: self._shouldStop,
+                        on_applied=_on_outer_applied,
                     )
                     if not slewCompleted:
                         break
@@ -216,11 +288,42 @@ class AcquisitionWorker(QObject):
                     self._sleepUntilOrStop(innerTarget)
                 else:
                     try:
+                        currentValue = float(
+                            self._activeSweepValuesByInstrumentId.get(
+                                innerInstId, {}
+                            ).get(innerKey, innerValue)
+                        )
+                        targetValue = float(innerValue)
+                        innerRampSteps = self._estimateSlewStepCount(
+                            current=currentValue,
+                            target=targetValue,
+                            maxSlewRate=float(innerSweep.get("maxSlewRate", 0.0)),
+                            maxSlewStep=float(
+                                innerSweep.get(
+                                    "maxSlewStep", innerSweep.get("stepSize", 0.0)
+                                )
+                            ),
+                        )
+                        innerRampApplied = 0
+
+                        def _on_inner_applied(value: float) -> None:
+                            nonlocal innerRampApplied
+                            innerRampApplied += 1
+                            self._activeSweepValuesByInstrumentId.setdefault(
+                                innerInstId, {}
+                            )[innerKey] = float(value)
+                            frac = (
+                                pointIndex + (innerRampApplied / max(1, innerRampSteps))
+                            ) / max(1, totalPoints)
+                            self.rampProgress.emit(
+                                float(min(max(frac, 0.0), 1.0)), label
+                            )
+
                         slewCompleted = self._safety.apply_slew_limited(
                             instrument_id=innerInstId,
                             instrument=innerInstrument,
                             key=innerKey,
-                            target_value=float(innerValue),
+                            target_value=targetValue,
                             max_slew_rate=float(innerSweep.get("maxSlewRate", 0.0)),
                             max_slew_step=float(
                                 innerSweep.get(
@@ -228,6 +331,7 @@ class AcquisitionWorker(QObject):
                                 )
                             ),
                             should_stop=lambda: self._shouldStop,
+                            on_applied=_on_inner_applied,
                         )
                         if not slewCompleted:
                             break
@@ -249,6 +353,21 @@ class AcquisitionWorker(QObject):
                 self._sampleAllInstruments(stepTimestamp)
                 pointIndex += 1
                 self.sweepProgress.emit(1, 1, pointIndex, totalPoints, label)
+        return (not self._shouldStop) and (pointIndex == totalPoints)
+
+    def _estimateSlewStepCount(
+        self,
+        current: float,
+        target: float,
+        maxSlewRate: float,
+        maxSlewStep: float,
+    ) -> int:
+        delta = abs(float(target) - float(current))
+        maxRate = float(maxSlewRate)
+        maxStep = abs(float(maxSlewStep))
+        if delta <= 0.0 or maxRate <= 0.0 or maxStep <= 0.0 or delta <= maxStep:
+            return 1
+        return max(1, int(np.ceil(delta / maxStep)))
 
     def _sampleAllInstruments(self, timestamp: float) -> None:
         valuesByInstrumentId: dict[str, dict[str, float]] = {}
