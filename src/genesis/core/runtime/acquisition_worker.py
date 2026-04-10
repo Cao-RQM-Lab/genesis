@@ -236,9 +236,11 @@ class AcquisitionWorker(QObject):
         for outerValue in outerValues:
             if self._shouldStop:
                 break
+            outerTimeValue: float | None = None
             if outerIsTime:
                 outerTarget = sweepStart + float(outerValue)
                 self._sleepUntilOrStop(outerTarget)
+                outerTimeValue = float(outerValue)
             else:
                 try:
                     currentValue = float(
@@ -371,6 +373,11 @@ class AcquisitionWorker(QObject):
                     self._sleepWithStop(innerSettle)
                 if self._shouldStop:
                     break
+                if outerIsTime and outerTimeValue is not None:
+                    # Keep the outer swept time coordinate fixed while scanning inner.
+                    self._activeSweepValuesByInstrumentId.setdefault("__time__", {})[
+                        "time"
+                    ] = float(outerTimeValue)
                 self._sampleAllInstruments(stepTimestamp)
                 pointIndex += 1
                 self.sweepProgress.emit(1, 1, pointIndex, totalPoints, label)

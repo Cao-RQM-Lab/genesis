@@ -99,32 +99,28 @@ class HeatmapPlotWidget(QWidget):
             z[yi, xi] = value
 
         self._image.setImage(z, autoLevels=True)
-
-        # Map heatmap cells onto actual sweep coordinates (not pixel indices).
-        xStep = self._estimateAxisStep(xVals)
-        yStep = self._estimateAxisStep(yVals)
-        xMin = float(xVals[0]) - (xStep / 2.0)
-        xMax = float(xVals[-1]) + (xStep / 2.0)
-        yMin = float(yVals[0]) - (yStep / 2.0)
-        yMax = float(yVals[-1]) + (yStep / 2.0)
-        width = max(xStep, xMax - xMin)
-        height = max(yStep, yMax - yMin)
-        self._image.setRect(QRectF(xMin, yMin, width, height))
-
+        width = float(len(xVals))
+        height = float(len(yVals))
+        # Keep image in index space; use axis ticks to show actual data values.
+        self._image.setRect(QRectF(-0.5, -0.5, width, height))
+        self.plotWidget.getAxis("bottom").setTicks([self._buildValueTicks(xVals), []])
+        self.plotWidget.getAxis("left").setTicks([self._buildValueTicks(yVals), []])
         view = self.plotWidget.getViewBox()
         view.setRange(
-            rect=QRectF(xMin, yMin, width, height),
+            rect=QRectF(-0.5, -0.5, width, height),
             padding=0.0,
         )
 
-    def _estimateAxisStep(self, values: list[float]) -> float:
-        if len(values) < 2:
-            return 1.0
-        diffs = [abs(float(b) - float(a)) for a, b in zip(values[:-1], values[1:])]
-        positive = [d for d in diffs if d > 0.0]
-        if not positive:
-            return 1.0
-        return float(np.median(np.asarray(positive, dtype=np.float64)))
+    def _buildValueTicks(self, values: list[float]) -> list[tuple[float, str]]:
+        if not values:
+            return []
+        count = len(values)
+        if count <= 12:
+            indices = list(range(count))
+        else:
+            sampled = np.linspace(0, count - 1, 12, dtype=int).tolist()
+            indices = sorted(set(sampled))
+        return [(float(i), f"{float(values[i]):.6g}") for i in indices]
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         self._updateSquareViewport()

@@ -54,6 +54,9 @@ class _EventInstrument(BaseInstrument):
     def applyConfigValue(self, key: str, value):
         self.events.append(f"write:{float(value):.6f}")
 
+    def readMeasurements(self, signalKeys: list[str]) -> dict[str, float]:
+        return {}
+
 
 class _OrderWorker(AcquisitionWorker):
     def __init__(self, events: list[str], *args, **kwargs):
@@ -279,6 +282,56 @@ class SlewIntegrationTests(unittest.TestCase):
         worker._runSingleSweep(sweeps[0])
         settle_idx = next(i for i, e in enumerate(events) if e.startswith("settle:"))
         self.assertTrue(all(e.startswith("write:") for e in events[:settle_idx]))
+
+    def test_outer_time_stays_constant_during_inner_loop(self) -> None:
+        instrument = _EventInstrument([])
+        sweeps = [
+            {
+                "instrumentId": "__time__",
+                "key": "time",
+                "start": 0.0,
+                "stop": 1.0,
+                "points": 2,
+                "settleTimeSeconds": 0.0,
+                "spacing": "linear",
+                "stepSize": 1.0,
+                "maxSlewRate": 0.0,
+                "maxSlewStep": 1.0,
+            },
+            {
+                "instrumentId": "dev",
+                "key": "level",
+                "start": 0.0,
+                "stop": 0.2,
+                "points": 3,
+                "settleTimeSeconds": 0.0,
+                "spacing": "linear",
+                "stepSize": 0.1,
+                "maxSlewRate": 0.0,
+                "maxSlewStep": 0.1,
+            },
+        ]
+        worker = AcquisitionWorker(
+            instrumentsById={"dev": instrument},
+            measurementKeysByInstrumentId={"dev": []},
+            sweeps=sweeps,
+            intervalSeconds=0.0,
+            initialSweepValuesByInstrumentId={"dev": {"level": 0.0}},
+            boundsByInstrumentId={},
+        )
+        sampledTimeValues: list[float] = []
+
+        def _on_sample(_ts: float, values: dict[str, dict[str, float]]) -> None:
+            sampledTimeValues.append(
+                float(values.get("__time__", {}).get("time", float("nan")))
+            )
+
+        worker.sampleEmitted.connect(_on_sample)
+        completed = worker._runConfiguredSweep()
+        self.assertTrue(completed)
+        self.assertEqual(len(sampledTimeValues), 6)
+        self.assertEqual(sampledTimeValues[:3], [0.0, 0.0, 0.0])
+        self.assertEqual(sampledTimeValues[3:], [1.0, 1.0, 1.0])
 
     def test_stop_during_ramp_keeps_intermediate_active_value(self) -> None:
         transport = DummyTestTransport("DUMMY")
