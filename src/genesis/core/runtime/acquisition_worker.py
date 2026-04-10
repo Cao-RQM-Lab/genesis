@@ -24,6 +24,7 @@ class AcquisitionWorker(QObject):
         measurementKeysByInstrumentId: dict[str, list[str]],
         sweeps: list[dict[str, Any]] | None = None,
         intervalSeconds: float = 0.2,
+        initialSweepValuesByInstrumentId: dict[str, dict[str, float]] | None = None,
     ) -> None:
         super().__init__()
         self.instrumentsById = instrumentsById
@@ -31,7 +32,11 @@ class AcquisitionWorker(QObject):
         self.sweeps = sweeps or []
         self.intervalSeconds = intervalSeconds
         self._shouldStop = False
-        self._activeSweepValuesByInstrumentId: dict[str, dict[str, float]] = {}
+        self._activeSweepValuesByInstrumentId: dict[str, dict[str, float]] = {
+            str(instId): {str(k): float(v) for k, v in values.items()}
+            for instId, values in (initialSweepValuesByInstrumentId or {}).items()
+            if isinstance(values, dict)
+        }
 
     def requestStop(self) -> None:
         self._shouldStop = True
@@ -91,7 +96,15 @@ class AcquisitionWorker(QObject):
                 self._sleepUntilOrStop(target)
             else:
                 try:
-                    instrument.applyConfigValue(key, point)
+                    slewCompleted = self._setSweepValueWithSlew(
+                        instrumentId=instrumentId,
+                        instrument=instrument,
+                        key=key,
+                        targetValue=float(point),
+                        maxSlewRate=float(sweep.get("maxSlewRate", 0.0)),
+                    )
+                    if not slewCompleted:
+                        break
                 except Exception as exc:
                     self.statusMessage.emit(f"{instrumentId}:{key} set failed: {exc}")
                     continue
@@ -157,7 +170,15 @@ class AcquisitionWorker(QObject):
                 self._sleepUntilOrStop(outerTarget)
             else:
                 try:
-                    outerInstrument.applyConfigValue(outerKey, outerValue)
+                    slewCompleted = self._setSweepValueWithSlew(
+                        instrumentId=outerInstId,
+                        instrument=outerInstrument,
+                        key=outerKey,
+                        targetValue=float(outerValue),
+                        maxSlewRate=float(outerSweep.get("maxSlewRate", 0.0)),
+                    )
+                    if not slewCompleted:
+                        break
                 except Exception as exc:
                     self.statusMessage.emit(
                         f"{outerInstId}:{outerKey} set failed: {exc}"
@@ -181,7 +202,15 @@ class AcquisitionWorker(QObject):
                     self._sleepUntilOrStop(innerTarget)
                 else:
                     try:
-                        innerInstrument.applyConfigValue(innerKey, innerValue)
+                        slewCompleted = self._setSweepValueWithSlew(
+                            instrumentId=innerInstId,
+                            instrument=innerInstrument,
+                            key=innerKey,
+                            targetValue=float(innerValue),
+                            maxSlewRate=float(innerSweep.get("maxSlewRate", 0.0)),
+                        )
+                        if not slewCompleted:
+                            break
                     except Exception as exc:
                         self.statusMessage.emit(
                             f"{innerInstId}:{innerKey} set failed: {exc}"
@@ -249,6 +278,44 @@ class AcquisitionWorker(QObject):
     def _sleepUntilOrStop(self, targetTime: float) -> None:
         while not self._shouldStop and time.time() < targetTime:
             time.sleep(min(0.05, targetTime - time.time()))
+
+    def _setSweepValueWithSlew(
+        self,
+        instrumentId: str,
+        instrument: BaseInstrument,
+        key: str,
+        targetValue: float,
+        maxSlewRate: float,
+    ) -> bool:
+        currentValue = self._activeSweepValuesByInstrumentId.get(instrumentId, {}).get(
+            key, None
+        )
+        if currentValue is None:
+            instrument.applyConfigValue(key, targetValue)
+            return True
+
+        delta = float(targetValue) - float(currentValue)
+        maxRate = float(maxSlewRate)
+        if abs(delta) <= 0.0 or maxRate <= 0.0:
+            instrument.applyConfigValue(key, targetValue)
+            return True
+
+        totalSeconds = abs(delta) / maxRate
+        if totalSeconds <= 0.0:
+            instrument.applyConfigValue(key, targetValue)
+            return True
+
+        stepSeconds = 0.05
+        rampSteps = max(1, int(np.ceil(totalSeconds / stepSeconds)))
+        for idx in range(1, rampSteps + 1):
+            if self._shouldStop:
+                return False
+            fraction = idx / rampSteps
+            value = float(currentValue) + delta * fraction
+            instrument.applyConfigValue(key, value)
+            if idx < rampSteps:
+                self._sleepWithStop(totalSeconds / rampSteps)
+        return True
 
 
 def startAcquisitionThread(

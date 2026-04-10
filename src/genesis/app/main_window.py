@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import csv
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -212,6 +213,11 @@ class MainWindow(QMainWindow):
 
     def _onStopClicked(self) -> None:
         self._stopAcquisition()
+        if self.currentJob is None:
+            self.statusLabel.setText("Sweep stopped.")
+            return
+        # Stop acts as "stop + initialize again".
+        self._initializeInstrumentsFromJob(self.currentJob.rawDefinition)
 
     def _clearPlots(self) -> None:
         self._plotConfigs.clear()
@@ -442,6 +448,12 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.statusLabel.setText(f"Initialize failed: {exc}")
             return
+        sweptPairs: set[tuple[str, str]] = set()
+        for sweep in sweeps:
+            instId = str(sweep.get("instrumentId", ""))
+            key = str(sweep.get("key", ""))
+            if instId and key:
+                sweptPairs.add((instId, key))
 
         # Apply all configured instrument values.
         for instDef in jobDefinition.get("instruments", []):
@@ -451,6 +463,9 @@ class MainWindow(QMainWindow):
                 continue
 
             for key, value in dict(instDef.get("config", {})).items():
+                if (instrumentId, str(key)) in sweptPairs:
+                    # Swept keys are set later with optional slew-rate limiting.
+                    continue
                 try:
                     instrument.applyConfigValue(str(key), value)
                 except Exception as exc:
@@ -475,14 +490,24 @@ class MainWindow(QMainWindow):
             key = str(sweep.get("key", ""))
             if not instId or not key:
                 continue
+            if instId == "__time__" and key == "time":
+                continue
             instrument = instrumentsById.get(instId)
             if instrument is None:
                 continue
             values = self._buildSweepValues(sweep)
             if len(values) == 0:
                 continue
+            target = float(values[0])
+            start = self._latestValues.get((instId, key), target)
             try:
-                instrument.applyConfigValue(key, values[0])
+                self._applySetpointWithOptionalSlew(
+                    instrument=instrument,
+                    key=key,
+                    startValue=float(start),
+                    targetValue=target,
+                    maxSlewRate=float(sweep.get("maxSlewRate", 0.0)),
+                )
             except Exception as exc:
                 self.statusLabel.setText(
                     f"Initialize failed at sweep {instId}:{key}: {exc}"
@@ -530,6 +555,7 @@ class MainWindow(QMainWindow):
             measurementKeysByInstrumentId=self._initializedMeasurementKeysByInstrumentId,
             sweeps=self._initializedSweeps,
             intervalSeconds=0.2,
+            initialSweepValuesByInstrumentId=self._initialSweepValuesByInstrumentId(),
         )
         thread, worker = startAcquisitionThread(worker)
         worker.sampleEmitted.connect(self._onSampleEmitted)
@@ -570,6 +596,45 @@ class MainWindow(QMainWindow):
                 self.statusLabel.setText(
                     f"Abort warning: safe state failed for {instrumentId}: {exc}"
                 )
+
+    def _initialSweepValuesByInstrumentId(self) -> dict[str, dict[str, float]]:
+        valuesByInstrumentId: dict[str, dict[str, float]] = {}
+        for sweep in self._initializedSweeps:
+            instId = str(sweep.get("instrumentId", ""))
+            key = str(sweep.get("key", ""))
+            if not instId or not key:
+                continue
+            val = self._latestValues.get((instId, key), None)
+            if val is None:
+                continue
+            valuesByInstrumentId.setdefault(instId, {})[key] = float(val)
+        return valuesByInstrumentId
+
+    def _applySetpointWithOptionalSlew(
+        self,
+        instrument: Any,
+        key: str,
+        startValue: float,
+        targetValue: float,
+        maxSlewRate: float,
+    ) -> None:
+        delta = float(targetValue) - float(startValue)
+        rate = float(maxSlewRate)
+        if abs(delta) <= 0.0 or rate <= 0.0:
+            instrument.applyConfigValue(key, float(targetValue))
+            return
+        totalSeconds = abs(delta) / rate
+        if totalSeconds <= 0.0:
+            instrument.applyConfigValue(key, float(targetValue))
+            return
+        stepSeconds = 0.05
+        steps = max(1, int(np.ceil(totalSeconds / stepSeconds)))
+        for idx in range(1, steps + 1):
+            fraction = idx / steps
+            value = float(startValue) + delta * fraction
+            instrument.applyConfigValue(key, float(value))
+            if idx < steps:
+                time.sleep(totalSeconds / steps)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         # Best-effort durability on app close.
