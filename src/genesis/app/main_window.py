@@ -1308,12 +1308,11 @@ class MainWindow(QMainWindow):
             baseName = Path(labelName).stem.strip() or "job"
         else:
             baseName = str(jobDefinition.get("jobId", "job")).strip() or "job"
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safeBaseName = "".join(
             c if c.isalnum() or c in "._-" else "_" for c in baseName
         )
         outDir = genesis_runs_dir()
-        defaultPath = outDir / f"{safeBaseName}_{stamp}.csv"
+        defaultPath = outDir / f"{safeBaseName}.csv"
         pathStr, selectedFilter = QFileDialog.getSaveFileName(
             self,
             "Save Raw Data",
