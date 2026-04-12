@@ -1,0 +1,16 @@
+---
+description: Keep core docs updated after critical feature changes
+alwaysApply: true
+---
+
+# Documentation Maintenance Rule
+
+- Whenever a critical functionality change is made, update both:
+  - `README.md`
+  - `src/genesis/instruments/DRIVER_AUTHORING_GUIDE.md`
+- Include user-facing behavior changes, operational workflow updates, and any driver-impacting runtime/safety changes.
+- Before finishing work, verify these two documents are still accurate for the new behavior.
+- When providing a context handoff/summary for the next agent, explicitly include:
+  - whether these two docs were updated,
+  - what sections changed,
+  - and any pending documentation follow-ups.

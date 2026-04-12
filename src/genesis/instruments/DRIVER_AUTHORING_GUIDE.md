@@ -212,3 +212,15 @@ def registerInstruments(registry: InstrumentRegistry) -> None:
 - Sweepable fields change correctly during sweeps.
 - Stop/abort and safe-state behavior works as expected.
 - No reset-heavy side effects in normal initialize path.
+
+## 13) Documentation Sync Requirement
+
+When critical functionality changes are implemented in Genesis (especially runtime safety, sweep orchestration, plotting behavior, or driver contract expectations), documentation must be updated in the same work:
+
+- `README.md` for user-facing workflow/behavior changes.
+- `src/genesis/instruments/DRIVER_AUTHORING_GUIDE.md` for driver-facing requirements and patterns.
+
+For agent-to-agent context handoff summaries, explicitly include:
+- whether these documents were updated,
+- what sections changed,
+- and any remaining doc follow-up items.
