@@ -1,5 +1,7 @@
 # Genesis
 
+> Disclaimer: This project is vibe-coded.
+
 Genesis is a PySide6 desktop application for configuring and running automated instrument sweeps, visualizing live data, and exporting run artifacts for analysis.
 
 It currently includes built-in drivers for:
