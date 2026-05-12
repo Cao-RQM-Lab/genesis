@@ -49,8 +49,11 @@ class VisaTransport(BaseTransport):
       Echo program/response payloads to **stdout**.
 
     **Stdout I/O trace (debugging):** Payloads are emitted as ``repr()`` so line
-    endings (``\\n``, ``\\r``) show as escapes. Prefix lines carry the ISO-8601
-    UTC wall-clock timestamp and the configured resource name.
+    endings show as escapes. Each line carries an ISO-8601 UTC timestamp and the
+    resource string. ``WRITE`` and outbound ``QUERY`` traces appear only **after**
+    the corresponding PyVISA call succeeds. If tracing stops before the next driver
+    command (for example nothing after ``CONF:FIELD:PROG`` before ``RAMP``), look
+    for an exception traceback from ``write()``/``query()`` instead.
 
     Enable with ``transportSettings`` ``visaLogIoStdout`` set ``true``, or set
     ``GENESIS_VISA_IO_LOG`` to ``1`` / ``true`` / ``yes`` / ``on`` (truthy wins
@@ -165,10 +168,10 @@ class VisaTransport(BaseTransport):
     def write(self, command: str) -> None:
         if self._resource is None:
             raise RuntimeError("VISA resource is not open.")
+        self._resource.write(command)
         self._emit_visa_io_stdout(
             ">>", "WRITE", self._program_message_sent_on_wire(command)
         )
-        self._resource.write(command)
 
     def read(self) -> str:
         if self._resource is None:
@@ -180,14 +183,13 @@ class VisaTransport(BaseTransport):
     def query(self, command: str) -> str:
         if self._resource is None:
             raise RuntimeError("VISA resource is not open.")
-        self._emit_visa_io_stdout(
-            ">>", "QUERY", self._program_message_sent_on_wire(command)
-        )
+        outbound = self._program_message_sent_on_wire(command)
         delay = float(self._setting("visaQueryDelay", 0.0))
         if delay > 0.0:
             text: str = self._resource.query(command, delay=delay)
         else:
             text = self._resource.query(command)
         reply = str(text)
+        self._emit_visa_io_stdout(">>", "QUERY", outbound)
         self._emit_visa_io_stdout("<<", "QUERY", reply)
         return reply
