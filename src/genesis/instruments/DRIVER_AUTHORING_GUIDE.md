@@ -56,6 +56,13 @@ Recommended class methods:
 8. `getSupportedTransportKeys(cls) -> list[str]`
    - Usually `["visa"]` unless intentionally supporting others.
 
+Optional (recommended for flaky GPIB or long ramp devices):
+
+9. `getDefaultTransportSettings(cls) -> dict[str, Any]`
+   - Returned dict is merged with per-job `"transportSettings"` and passed into
+     `VisaTransport` (`src/genesis/core/transport/visa_transport.py`).
+   - Typical keys include `visaTimeoutMs`, `writeTermination`, `readTermination`.
+
 ## 3) Naming Conventions
 
 Follow these conventions to match current code:
@@ -258,7 +265,44 @@ def registerInstruments(registry: InstrumentRegistry) -> None:
 6. Register driver and run app.
 7. Validate with real hardware or dummy transport first, then hardware.
 
-## 12) Validation Checklist Before Merge
+## 12) VISA defaults, ``transportSettings``, and ``VI_ERROR_BERR``
+
+Genesis configures PyVISA *message-based* resources on ``open()``: newline write
+and read terminators (IEEE 488.2 SCPI convention), timeouts, optional
+``clear()``, and ``query()`` uses ``resource.query`` (not separate untimed
+write+read). Missing terminators often show up from NI backends as
+``VI_ERROR_BERR: Bus error occurred during transfer``.
+
+**Per-job overrides:** add optional ``transportSettings`` to an instrument dict
+(job JSON); values override driver defaults merged in
+``MainWindow._buildRuntimeFromJob``.
+
+Example (longer GPIB timeouts, terminators unchanged):
+
+```json
+"instruments": [{
+  "id": "mag",
+  "type": "ami420",
+  "transport": "visa",
+  "address": "GPIB0::22::INSTR",
+  "transportSettings": { "visaTimeoutMs": 60000, "visaClearOnOpen": false }
+}]
+```
+
+Recognized keys (see ``VisaTransport`` docstring for defaults): ``visaTimeoutMs``,
+``writeTermination``, ``readTermination``, ``visaQueryDelay``,
+``visaClearOnOpen``, ``visaSendEndOnWrite``.
+
+Hardware checklist if errors persist:
+
+- GPIB cable, termination, duplicate controller access, instrument address.
+- Try ``visaClearOnOpen``: ``false`` in ``transportSettings`` if the programmer rejects IEEE 488 clear.
+- Try ``writeTermination`` of ``"\r"`` or ``"\r\n"`` only if the manual specifies it.
+
+The AMI Model 420 driver exposes ``getDefaultTransportSettings()`` for
+reasonable magnet-ramp timeouts; merge with manual hardware checks first.
+
+## 13) Validation Checklist Before Merge
 
 - Driver discovered by registry automatically.
 - Config fields render correctly in Job Builder.
@@ -269,7 +313,7 @@ def registerInstruments(registry: InstrumentRegistry) -> None:
 - Stop/abort and safe-state behavior works as expected.
 - No reset-heavy side effects in normal initialize path.
 
-## 13) Documentation Sync Requirement
+## 14) Documentation Sync Requirement
 
 When critical functionality changes are implemented in Genesis (especially runtime safety, sweep orchestration, plotting behavior, or driver contract expectations), documentation must be updated in the same work:
 

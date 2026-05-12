@@ -634,8 +634,23 @@ class MainWindow(QMainWindow):
             if not instrumentId or not instrumentTypeKey:
                 continue
 
+            instrument_type_cls = registry.getInstrumentType(instrumentTypeKey)
+            transport_settings: dict[str, Any] = {}
+            factory_defaults_fn = getattr(
+                instrument_type_cls, "getDefaultTransportSettings", None
+            )
+            if callable(factory_defaults_fn):
+                raw_defaults = factory_defaults_fn()
+                if isinstance(raw_defaults, dict):
+                    transport_settings.update(dict(raw_defaults))
+            user_transport = instDef.get("transportSettings")
+            if isinstance(user_transport, dict):
+                transport_settings.update(dict(user_transport))
+
             transport = createTransport(
-                transportKey=transportKey, resourceName=address, settings=None
+                transportKey=transportKey,
+                resourceName=address,
+                settings=transport_settings,
             )
             transport.open()
 

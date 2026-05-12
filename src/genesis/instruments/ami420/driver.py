@@ -67,6 +67,22 @@ class Ami420Instrument(BaseInstrument):
         return "GPIB0::22::INSTR"
 
     @classmethod
+    def getDefaultTransportSettings(cls) -> dict[str, Any]:
+        """
+        Conservative GPIB settings for AMI controllers.
+
+        Missing SCPI/message terminators and short timeouts commonly surface as
+        ``VI_ERROR_BERR`` during queries on NI-VISA backends.
+        """
+
+        return {
+            "visaTimeoutMs": 30000,
+            "writeTermination": "\n",
+            "readTermination": "\n",
+            "visaClearOnOpen": True,
+        }
+
+    @classmethod
     def getAvailableMeasurementSignals(cls) -> list[tuple[str, str]]:
         return [
             ("magnetFieldT", "Magnet Field (T)"),

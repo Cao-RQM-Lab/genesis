@@ -172,7 +172,7 @@ class InstrumentInstanceEditor(QWidget):
             if cb.isChecked():
                 measurements.append(key)
 
-        return {
+        result: dict[str, Any] = {
             "id": str(self.idLineEdit.text()),
             "type": self.instrumentTypeKey,
             "transport": str(self.transportComboBox.currentText()),
@@ -181,6 +181,10 @@ class InstrumentInstanceEditor(QWidget):
             "safeConfig": self.safeConfigForm.getValues(),
             "measurements": measurements,
         }
+        raw_ts = self.initialValues.get("transportSettings")
+        if isinstance(raw_ts, dict):
+            result["transportSettings"] = dict(raw_ts)
+        return result
 
     def getMeasuredSignals(self) -> list[str]:
         measurements: list[str] = []

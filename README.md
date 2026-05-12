@@ -31,6 +31,7 @@ It currently includes built-in drivers for:
 - VISA backend available on your machine if using real hardware
   - The app uses `pyvisa`/`pyvisa-py`
   - On Windows, install a VISA runtime (for example NI-VISA) if your instrument connection requires it
+  - If GPIB raises `VI_ERROR_BERR`, check cabling and address first; Genesis enables SCPI newline terminators and timeouts on `VisaTransport` by default—see the driver guide section on VISA / `transportSettings` for overrides.
 
 ### 2) Install
 
