@@ -230,40 +230,47 @@ class InstrumentInstanceEditor(QWidget):
 
     def _updateModeAwareSweepUi(self) -> None:
         values = self.configForm.getValues()
-        forceMode = str(values.get("forceMode", "")).upper()
-        if not forceMode:
-            return
-        if forceMode == "VOLT":
-            self.configForm.setSweepOptionEnabled("forceVoltageLevelV", True)
-            self.configForm.setSweepOptionEnabled("forceCurrentLevelA", False)
-            self.configForm.setFieldEnabled("forceVoltageLevelV", True)
-            self.configForm.setFieldEnabled("forceCurrentLevelA", False)
-        elif forceMode == "CURR":
-            self.configForm.setSweepOptionEnabled("forceVoltageLevelV", False)
-            self.configForm.setSweepOptionEnabled("forceCurrentLevelA", True)
-            self.configForm.setFieldEnabled("forceVoltageLevelV", False)
-            self.configForm.setFieldEnabled("forceCurrentLevelA", True)
+        modeWidget = self.configForm.getWidget("forceMode")
+        if modeWidget is not None:
+            forceMode = str(values.get("forceMode", "")).upper()
+            if forceMode == "VOLT":
+                self.configForm.setSweepOptionEnabled("forceVoltageLevelV", True)
+                self.configForm.setSweepOptionEnabled("forceCurrentLevelA", False)
+                self.configForm.setFieldEnabled("forceVoltageLevelV", True)
+                self.configForm.setFieldEnabled("forceCurrentLevelA", False)
+            elif forceMode == "CURR":
+                self.configForm.setSweepOptionEnabled("forceVoltageLevelV", False)
+                self.configForm.setSweepOptionEnabled("forceCurrentLevelA", True)
+                self.configForm.setFieldEnabled("forceVoltageLevelV", False)
+                self.configForm.setFieldEnabled("forceCurrentLevelA", True)
 
-        voltageAutoEnabled = int(values.get("voltageRangeAuto", 1)) != 0
-        currentAutoEnabled = int(values.get("currentRangeAuto", 1)) != 0
-        self.configForm.setFieldEnabled("voltageSenseRangeV", not voltageAutoEnabled)
-        self.configForm.setFieldEnabled("currentSenseRangeA", not currentAutoEnabled)
+            voltageAutoEnabled = int(values.get("voltageRangeAuto", 1)) != 0
+            currentAutoEnabled = int(values.get("currentRangeAuto", 1)) != 0
+            self.configForm.setFieldEnabled(
+                "voltageSenseRangeV", not voltageAutoEnabled
+            )
+            self.configForm.setFieldEnabled(
+                "currentSenseRangeA", not currentAutoEnabled
+            )
+
         for key in self._sweptConfigKeys:
             self.configForm.setFieldEnabled(key, False)
 
         safeValues = self.safeConfigForm.getValues()
-        safeForceMode = str(safeValues.get("forceMode", "")).upper()
-        if safeForceMode == "VOLT":
-            self.safeConfigForm.setFieldEnabled("forceVoltageLevelV", True)
-            self.safeConfigForm.setFieldEnabled("forceCurrentLevelA", False)
-        elif safeForceMode == "CURR":
-            self.safeConfigForm.setFieldEnabled("forceVoltageLevelV", False)
-            self.safeConfigForm.setFieldEnabled("forceCurrentLevelA", True)
-        safeVoltageAutoEnabled = int(safeValues.get("voltageRangeAuto", 1)) != 0
-        safeCurrentAutoEnabled = int(safeValues.get("currentRangeAuto", 1)) != 0
-        self.safeConfigForm.setFieldEnabled(
-            "voltageSenseRangeV", not safeVoltageAutoEnabled
-        )
-        self.safeConfigForm.setFieldEnabled(
-            "currentSenseRangeA", not safeCurrentAutoEnabled
-        )
+        safeModeWidget = self.safeConfigForm.getWidget("forceMode")
+        if safeModeWidget is not None:
+            safeForceMode = str(safeValues.get("forceMode", "")).upper()
+            if safeForceMode == "VOLT":
+                self.safeConfigForm.setFieldEnabled("forceVoltageLevelV", True)
+                self.safeConfigForm.setFieldEnabled("forceCurrentLevelA", False)
+            elif safeForceMode == "CURR":
+                self.safeConfigForm.setFieldEnabled("forceVoltageLevelV", False)
+                self.safeConfigForm.setFieldEnabled("forceCurrentLevelA", True)
+            safeVoltageAutoEnabled = int(safeValues.get("voltageRangeAuto", 1)) != 0
+            safeCurrentAutoEnabled = int(safeValues.get("currentRangeAuto", 1)) != 0
+            self.safeConfigForm.setFieldEnabled(
+                "voltageSenseRangeV", not safeVoltageAutoEnabled
+            )
+            self.safeConfigForm.setFieldEnabled(
+                "currentSenseRangeA", not safeCurrentAutoEnabled
+            )

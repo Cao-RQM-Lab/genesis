@@ -173,6 +173,26 @@ class AcquisitionWorker(QObject):
                     )
                     if not slewCompleted:
                         break
+                    if instrument is not None:
+
+                        def _on_settle_progress(measured: float) -> None:
+                            self._activeSweepValuesByInstrumentId.setdefault(
+                                instrumentId, {}
+                            )[key] = float(measured)
+                            frac = pointIndex / max(1, len(values))
+                            self.rampProgress.emit(
+                                float(min(max(frac, 0.0), 1.0)),
+                                f"{label} (settling)",
+                            )
+
+                        settled = instrument.waitForSetpoint(
+                            key=key,
+                            target_value=targetValue,
+                            should_stop=lambda: self._shouldStop,
+                            on_progress=_on_settle_progress,
+                        )
+                        if not settled:
+                            break
                 except Exception as exc:
                     self.statusMessage.emit(f"{instrumentId}:{key} set failed: {exc}")
                     continue
@@ -288,6 +308,26 @@ class AcquisitionWorker(QObject):
                     )
                     if not slewCompleted:
                         break
+                    if outerInstrument is not None:
+
+                        def _on_outer_settle(measured: float) -> None:
+                            self._activeSweepValuesByInstrumentId.setdefault(
+                                outerInstId, {}
+                            )[outerKey] = float(measured)
+                            frac = pointIndex / max(1, totalPoints)
+                            self.rampProgress.emit(
+                                float(min(max(frac, 0.0), 1.0)),
+                                f"{label} (settling outer)",
+                            )
+
+                        settled = outerInstrument.waitForSetpoint(
+                            key=outerKey,
+                            target_value=targetValue,
+                            should_stop=lambda: self._shouldStop,
+                            on_progress=_on_outer_settle,
+                        )
+                        if not settled:
+                            break
                 except Exception as exc:
                     self.statusMessage.emit(
                         f"{outerInstId}:{outerKey} set failed: {exc}"
@@ -358,6 +398,26 @@ class AcquisitionWorker(QObject):
                         )
                         if not slewCompleted:
                             break
+                        if innerInstrument is not None:
+
+                            def _on_inner_settle(measured: float) -> None:
+                                self._activeSweepValuesByInstrumentId.setdefault(
+                                    innerInstId, {}
+                                )[innerKey] = float(measured)
+                                frac = pointIndex / max(1, totalPoints)
+                                self.rampProgress.emit(
+                                    float(min(max(frac, 0.0), 1.0)),
+                                    f"{label} (settling inner)",
+                                )
+
+                            settled = innerInstrument.waitForSetpoint(
+                                key=innerKey,
+                                target_value=targetValue,
+                                should_stop=lambda: self._shouldStop,
+                                on_progress=_on_inner_settle,
+                            )
+                            if not settled:
+                                break
                     except Exception as exc:
                         self.statusMessage.emit(
                             f"{innerInstId}:{innerKey} set failed: {exc}"

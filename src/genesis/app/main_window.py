@@ -767,6 +767,16 @@ class MainWindow(QMainWindow):
                         latestValueUpdates[(instrumentId, keyStr)] = float(bounded)
                     if self.abortController.isAbortRequested():
                         _abort_now()
+
+            for instrument in instrumentsById.values():
+                if not instrument.finalizeInitialization(
+                    self.abortController.isAbortRequested
+                ):
+                    if self.abortController.isAbortRequested():
+                        _abort_now()
+                    raise RuntimeError(
+                        "Initialization incomplete: instrument did not reach setpoint in time."
+                    )
         except Exception:
             if self.abortController.isAbortRequested():
                 for instrument in instrumentsById.values():

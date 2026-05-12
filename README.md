@@ -7,6 +7,7 @@ Genesis is a PySide6 desktop application for configuring and running automated i
 It currently includes built-in drivers for:
 - Keysight/Agilent B29xx SMU family
 - Stanford Research SR850 lock-in amplifier
+- American Magnetics Inc. Model 420 superconducting magnet power supply programmer
 
 ## Core Functionalities
 
@@ -168,6 +169,10 @@ python -m unittest discover -s tests -p "test_*.py"
 - Runtime safety logic should be centralized and reusable.
 - Driver contracts should remain consistent with `base_instrument` and config field definitions.
 - Avoid bypassing shared safety/slew paths in new execution flows.
+
+### Instrument / SCPI Style
+
+- Prefer **short-form (abbreviated) SCPI keywords** in transport strings, consistent with manuals and with other Genesis drivers (e.g. `:SOUR...:CURR`, `CONF:FIELD:PROG`). Avoid long mixed-case spellings unless the device requires them.
 
 ### Testing Style
 

@@ -5,6 +5,8 @@ This document explains how to write a functional instrument driver in Genesis wi
 It is based on current working drivers:
 - `src/genesis/instruments/b29xx/driver.py`
 - `src/genesis/instruments/sr850/driver.py`
+- `src/genesis/instruments/ami420/driver.py` (example of a controller-managed
+  ramp that uses the async settle hook)
 
 ## 1) File and Module Layout
 
@@ -132,6 +134,52 @@ Important implications:
 
 Slew behavior is orchestrated outside drivers (device-agnostic), so new drivers do not need custom slew code.
 
+### 7.1) Asynchronous Settle Hook (`waitForSetpoint`)
+
+Some instruments (e.g. AMI Model 420 magnet controllers) handle ramping
+internally on the device. After commanding a new setpoint, the program must
+wait for the device to physically reach the target without freezing the UI.
+
+`BaseInstrument` provides:
+
+```python
+def waitForSetpoint(
+    self,
+    key: str,
+    target_value: float,
+    should_stop: Callable[[], bool] | None = None,
+    on_progress: Callable[[float], None] | None = None,
+) -> bool:
+    ...
+```
+
+Contract:
+- Default implementation is a no-op (`return True`); most drivers should not override.
+- Override only when hardware needs measurable settling and the runtime
+  should not advance to sampling until the setpoint is physically reached.
+- The implementation MUST cooperatively check `should_stop()` between polls
+  so abort latency stays small.
+- The implementation SHOULD invoke `on_progress(measured_value)` periodically
+  so live plots and progress indicators stay responsive.
+- Return `False` for any condition where the setpoint cannot be considered
+  reached (timeout, quench, hardware fault). Return `True` once within
+  tolerance.
+
+The acquisition worker calls this automatically after each non-time sweep
+step's setpoint is applied, both for 1D and 2D sweeps.
+
+### 7.2) Initialization settling (`finalizeInitialization`)
+
+After the main window applies safe/config setpoints during **Initialize**, it
+calls `finalizeInitialization(should_stop)` on each instrument. Default:
+`return True` (immediate).
+
+Override when the physical plant still needs time to match the last written
+setpoint after initialization (e.g. AMI Model 420: internal magnet ramp).
+Typically delegate to the same polling logic as `waitForSetpoint` for the
+commanded field/current. Runs on the background init thread; keep it
+cooperative with `should_stop` for abort.
+
 ## 8) `applyConfigValue` Implementation Pattern
 
 Use a clear key-dispatch structure:
@@ -145,6 +193,14 @@ Use a clear key-dispatch structure:
 4. Ignore unknown keys safely (or raise if appropriate).
 
 Keep formatting helpers (`_fmtFloat`) for consistent command strings.
+
+### SCPI command spelling
+
+Use **short-form SCPI keywords** (abbreviated headers) in `write` / `query`
+strings unless a specific instrument requires a longer form. This matches other
+Genesis drivers (e.g. Keysight-style `:SOUR:...:CURR`) and typical programmer
+manuals. Document the exact strings used in the class docstring or field
+`helpText` where users map UI to hardware.
 
 ## 9) Measurement Read Pattern
 

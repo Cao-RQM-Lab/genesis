@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Callable
 
 from genesis.core.transport.base_transport import BaseTransport
 
@@ -54,6 +54,45 @@ class BaseInstrument(ABC):
         """
 
         raise NotImplementedError
+
+    def finalizeInitialization(
+        self, should_stop: Callable[[], bool] | None = None
+    ) -> bool:
+        """
+        Optional hook after safe/config values have been applied during job
+        initialization. Instruments whose physical output lags the last write
+        (e.g. magnet controllers) should override and block here until
+        settling completes or should_stop returns True.
+
+        Runs on the background initialization thread, not the GUI thread.
+        """
+
+        return True
+
+    def waitForSetpoint(
+        self,
+        key: str,
+        target_value: float,
+        should_stop: Callable[[], bool] | None = None,
+        on_progress: Callable[[float], None] | None = None,
+    ) -> bool:
+        """
+        Optional hook called after applyConfigValue to block until the
+        instrument has physically reached the commanded setpoint.
+
+        Default implementation is a no-op returning True (immediate). Drivers
+        that need to wait for hardware settling (e.g. magnet controllers that
+        handle ramping internally) should override this and:
+          - poll the relevant measurement until within tolerance,
+          - cooperatively check should_stop between polls so abort works,
+          - call on_progress(measured_value) periodically so the runtime can
+            update active values, live plots, and progress indicators.
+
+        Returns True on successful settle (or no-op), False if interrupted by
+        should_stop or by a fatal device condition.
+        """
+
+        return True
 
     # ---- Job-builder / configuration metadata (no behavior lives here) ----
 
