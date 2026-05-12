@@ -291,7 +291,8 @@ Example (longer GPIB timeouts, terminators unchanged):
 
 Recognized keys (see ``VisaTransport`` docstring for defaults): ``visaTimeoutMs``,
 ``writeTermination``, ``readTermination``, ``visaQueryDelay``,
-``visaClearOnOpen``, ``visaSendEndOnWrite``.
+``visaClearOnOpen``, ``visaSendEndOnWrite``, ``visaLogIoStdout`` (echo I/O frames
+with UTC timestamps on stdout via ``repr()``, ``GENESIS_VISA_IO_LOG`` env toggles).
 
 Hardware checklist if errors persist:
 

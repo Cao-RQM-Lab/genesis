@@ -32,6 +32,7 @@ It currently includes built-in drivers for:
   - The app uses `pyvisa`/`pyvisa-py`
   - On Windows, install a VISA runtime (for example NI-VISA) if your instrument connection requires it
   - If GPIB raises `VI_ERROR_BERR`, check cabling and address first; Genesis enables SCPI newline terminators and timeouts on `VisaTransport` by default—see the driver guide section on VISA / `transportSettings` for overrides.
+  - For bus-level debugging, set `GENESIS_VISA_IO_LOG=1` or put `"visaLogIoStdout": true` under `"transportSettings"` for an instrument so `VisaTransport` prints UTC-timestamped frames to stdout with `repr()` (line endings visible as escapes).
 
 ### 2) Install
 
